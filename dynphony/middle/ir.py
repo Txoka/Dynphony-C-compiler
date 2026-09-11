@@ -413,10 +413,10 @@ def lower(program):
             Instruction("global_addr", address, (), pointer(CHAR), "__dyn_printf_framebuffer")
         )
         startup.instructions.append(
-            Instruction("clear_text_framebuffer", args=(address,))
+            Instruction("init_text_screen", args=(address,))
         )
         startup.instructions.append(
-            Instruction("init_text_screen", args=(address,))
+            Instruction("clear_text_framebuffer", args=(address,))
         )
     result = startup.values
     startup.values += 1

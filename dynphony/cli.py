@@ -5,8 +5,8 @@ import json
 import sys
 from pathlib import Path
 from .compiler import compile_source
-from .backend import Target
-from .model import CompileError
+from .targets.dynphony import Target
+from .middle.model import CompileError
 from .emulator import Machine, signed
 
 

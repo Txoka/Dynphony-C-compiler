@@ -1,7 +1,7 @@
 # Optimization roadmap
 
 This tracks the standard optimization work proposed for Dynphony C. Checked
-items are implemented in version 0.11.0. Partially checked sections describe the
+items are implemented in version 0.12.0. Partially checked sections describe the
 working subset and the remaining work explicitly.
 
 ## Current priorities

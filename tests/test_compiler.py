@@ -12,6 +12,7 @@ from dynphony.emulator import Machine, signed
 from dynphony.frontend import parse, typecheck
 from dynphony.ir import lower
 from dynphony import isa
+from dynphony.targets.dynphony.abi import ABI
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -398,6 +399,15 @@ class DiagnosticTests(unittest.TestCase):
 
 
 class EncodingTests(unittest.TestCase):
+    def test_named_registers_and_abi_roles(self):
+        self.assertEqual(isa.Register.ZR, 0)
+        self.assertEqual(isa.Register.SP, 14)
+        self.assertEqual(isa.Register.FLAGS, 15)
+        self.assertEqual(isa.register_name(isa.Register.R7), "r7")
+        self.assertEqual(isa.parse_register("sp"), isa.Register.SP)
+        self.assertEqual(ABI.argument_registers, tuple(range(1, 7)))
+        self.assertEqual(ABI.return_register, isa.Register.R1)
+
     def test_lowerer_emits_canonical_calls_and_fallthrough(self):
         module = lower(
             typecheck(

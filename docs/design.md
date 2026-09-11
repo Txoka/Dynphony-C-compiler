@@ -2,6 +2,12 @@
 
 ## Boundaries
 
+`Compiler` orchestrates a `SourceFrontend` and a target backend. `CFrontend`
+owns every C-specific preparation step, including parser invocation, injected
+device declarations and arithmetic runtime source, semantic analysis, and
+lowering. A future frontend can implement the same source-to-`ModuleIR` protocol
+without importing pycparser or changing middle-end and Dynphony target modules.
+
 `parse` uses pycparser's lexer/parser without running a preprocessor. A lexical comment pass preserves line breaks and string/character literals. Runtime helpers are parsed separately so diagnostics retain the user's filename and line numbers.
 
 `Frontend.build` collects function/global symbols, structure and enum tags, then checks global initializers and function bodies. Its result consists solely of project-owned `Type`, `Record`, `Symbol`, `Node`, `Global`, and `Function` records. Structure records are shared objects so an incomplete `struct Node` can be referenced through a pointer while its members are being completed. Member offsets, natural alignment, const qualification, implicit integer conversions, and array/function decay are explicit before IR lowering. Unsupported constructs fail here instead of reaching machine emission.
@@ -10,7 +16,13 @@
 
 `lower` also creates `_start` as an ordinary root IR function containing target initialization, a direct call to `main`, and termination. `optimize` repeatedly combines local simplification, explicit CFG reachability, call-graph reachability, and no-duplication single-caller relocation until the whole module stops changing. It can turn an indirect call into a direct call when propagation later proves its target, promotes read-only parameters and non-escaping scalar locals, folds scalar operations and branches, fuses comparison/branch pairs, eliminates safe tail calls, applies algebraic and power-of-two reductions, and removes unused values, blocks, functions, and arithmetic helpers.
 
-`Backend` assigns slots to objects and live computed values, rematerializes constants and addresses at their uses, selects immediate instructions, and emits code with symbolic address fixups. IR has already chosen direct calls, branch direction, and fallthrough; the backend does not rediscover those semantic relationships. Static data is appended with alignment and explicit zero bytes. For fixed-address images, `Assembler.finish` repeatedly relaxes symbolic branches and direct calls after layout, updates label and relocation offsets, and emits the shortest legal target form without padding. That target-width decision requires final byte addresses and remains machine-specific. Data relocations are finalized afterwards. PIC address constants occupy 12 bytes (three immediate ALU operations) plus a 3-byte base add. Ordinary constants use a four-byte immediate form when possible.
+The Dynphony target separates architectural register names, ABI roles, target/image configuration, ISA encoding, symbolic assembly/relaxation, and backend instruction selection. `Backend` assigns slots to objects and live computed values, rematerializes constants and addresses at their uses, selects immediate instructions, and emits symbolic fixups through `Assembler`. IR has already chosen direct calls, branch direction, and fallthrough; the backend does not rediscover those semantic relationships. Static data is appended with alignment and explicit zero bytes. For fixed-address images, `Assembler.finish` repeatedly relaxes symbolic branches and direct calls after layout, updates label and relocation offsets, and emits the shortest legal target form without padding. That target-width decision requires final byte addresses and remains machine-specific. Data relocations are finalized afterwards. PIC address constants occupy 12 bytes (three immediate ALU operations) plus a 3-byte base add. Ordinary constants use a four-byte immediate form when possible.
+
+The middle end owns a reusable fixed-point pass manager. The pipeline schedules
+local scalar/CFG transformations and module call-graph transformations as explicit
+pass groups, comparing canonical IR snapshots until the module stops changing.
+New analyses belong under `middle/analysis`; new transformations belong under
+`middle/passes`.
 
 ## Stack frame and calls
 

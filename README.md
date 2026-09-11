@@ -172,23 +172,31 @@ The next substantial opportunities are SSA phi nodes, full data-flow propagation
 
 ```text
 dynphony/
-  frontend.py   pycparser adapter, scopes, types, conversions, constant evaluation
-  model.py      target types, symbols, typed AST, static objects
-  ir.py         typed AST to explicit memory/control-flow IR
-  optimize.py   compatibility import for the optimizer package
-  optimizer/
-    cfg.py       basic-block edges and reachability
-    pipeline.py  Tier 1 fixed point, call-graph relocation, scalar passes
-  intrinsics.py built-in C device-function declarations
-  runtime.py    software arithmetic helpers written in the supported C subset
-  isa.py        byte encoding primitives
-  backend.py    stack frames, instruction selection, layout, address fixups
-  emulator.py   independent instruction-byte decoder and execution test runner
-  compiler.py   public pipeline API
-  cli.py        raw binary, IR dump, JSON map, optional execution
+  frontends/
+    protocol.py      source-language frontend contract
+    c/               C parsing, semantics, and common-IR lowering
+  middle/
+    model.py         shared types, symbols, typed nodes, and static objects
+    ir.py            canonical language-neutral IR
+    analysis/        CFG and reusable middle-end analyses
+    passes/          fixed-point manager and optimization passes
+  targets/dynphony/
+    registers.py     architectural register names
+    abi.py           C calling-convention roles
+    isa.py           instruction names and byte encoders
+    config.py        target options and image metadata
+    assembler.py     symbols, relocations, and final relaxation
+    backend.py       instruction selection, registers, and stack frames
+  runtime/           device declarations and selectively linked helpers
+  emulator/          independent reference machine and device model
+  compiler.py        frontend-independent pipeline orchestrator
+  cli.py             raw binary, IR dump, JSON map, optional execution
 examples/       C source and precompiled demonstration binaries
-Tests live in tests/; the original ISA and design notes live in docs/.
 ```
+
+Thin root-level compatibility modules preserve imports such as `dynphony.isa`
+and `dynphony.frontend`. Tests live in `tests/`; the original ISA and design
+notes live in `docs/`.
 
 `examples/towers_of_hanoi.c` is a recursive controller for the Turing Complete
 magnet puzzle. It reads the highest disk number, source, destination, and spare

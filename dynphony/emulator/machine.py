@@ -7,7 +7,7 @@ reads flag bits. This is a reference test runner, not a cycle-accurate CPU model
 
 from collections import deque
 
-from .backend import Target
+from ..targets.dynphony.config import Target
 
 MASK = 0xFFFFFFFF
 

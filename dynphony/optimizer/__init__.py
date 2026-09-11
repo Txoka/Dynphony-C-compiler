@@ -1,7 +1,7 @@
 """Reusable control-flow and optimization infrastructure."""
 
-from .cfg import BasicBlock, ControlFlowGraph, build_cfg, prune_unreachable_blocks
-from .pipeline import optimize
+from ..middle.analysis import BasicBlock, ControlFlowGraph, build_cfg, prune_unreachable_blocks
+from ..middle.passes import optimize
 
 __all__ = [
     "BasicBlock",

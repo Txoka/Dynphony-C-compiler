@@ -40,8 +40,9 @@ wheels with `make wheel`, an sdist with `make sdist`, or both with `make dist`.
 
 Tags matching `v*` trigger `.github/workflows/release.yml`. The workflow checks
 that the tag matches `pyproject.toml`, runs the test suite, builds and smoke-tests
-CPython 3.10–3.15 wheels for all cibuildwheel-supported desktop/server CPU
-families, builds an sdist, and attaches every distribution to a GitHub Release.
+CPython 3.10–3.15 wheels for mainstream Linux x86_64/arm64, macOS Intel/Apple
+Silicon, and Windows AMD64/ARM64 targets, builds an sdist, and attaches every
+distribution to a GitHub Release.
 Create a release with, for example, `git tag v0.13.0 && git push origin v0.13.0`.
 
 Generate a position-independent image and execute it at another address:

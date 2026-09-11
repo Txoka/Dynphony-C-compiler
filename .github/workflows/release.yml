@@ -52,33 +52,13 @@ jobs:
             os: ubuntu-latest
             archs: "x86_64"
             qemu: false
-          - name: linux-x86-32
-            os: ubuntu-latest
-            archs: "i686"
-            qemu: false
           - name: linux-arm64
             os: ubuntu-24.04-arm
             archs: "aarch64"
             qemu: false
-          - name: linux-armv7
-            os: ubuntu-24.04-arm
-            archs: "armv7l"
-            qemu: true
-          - name: linux-ppc64le
-            os: ubuntu-latest
-            archs: "ppc64le"
-            qemu: true
-          - name: linux-s390x
-            os: ubuntu-latest
-            archs: "s390x"
-            qemu: true
-          - name: linux-riscv64
-            os: ubuntu-latest
-            archs: "riscv64"
-            qemu: true
           - name: macos-intel
             os: macos-15-intel
-            archs: "x86_64 universal2"
+            archs: "x86_64"
             qemu: false
           - name: macos-arm
             os: macos-latest
@@ -86,7 +66,7 @@ jobs:
             qemu: false
           - name: windows-x86
             os: windows-latest
-            archs: "AMD64 x86"
+            archs: "AMD64"
             qemu: false
           - name: windows-arm
             os: windows-11-arm
@@ -146,6 +126,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out tag for GitHub CLI release operations
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
       - name: Download distributions
         uses: actions/download-artifact@v8
         with:

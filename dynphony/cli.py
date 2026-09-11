@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from .compiler import compile_source
 from .targets.dynphony import Target
@@ -38,6 +39,11 @@ def main(argv=None):
         "--run-address", type=number, help="relocate a PIC image for emulator execution"
     )
     p.add_argument("--max-steps", type=int, default=5_000_000)
+    p.add_argument(
+        "--hz-meter",
+        action="store_true",
+        help="show live emulator throughput in instructions per second",
+    )
     args = p.parse_args(argv)
     try:
         target = Target(
@@ -73,7 +79,38 @@ def main(argv=None):
                 persistent_size=args.persistent_size,
             )
             halt = result.image.symbols["_halt"] + (address if args.pic else 0)
-            value = m.run(halt, args.max_steps)
+            started = time.perf_counter()
+            meter_width = 0
+            meter_steps = -1
+
+            def show_meter(machine):
+                nonlocal meter_steps, meter_width
+                if machine.steps == meter_steps:
+                    return
+                meter_steps = machine.steps
+                elapsed = time.perf_counter() - started
+                hz = machine.steps / elapsed if elapsed else 0
+                message = (
+                    f"Emulating: {machine.steps:,} instructions; "
+                    f"{hz:,.0f} Hz; PC={machine.pc:#x}"
+                )
+                print(
+                    "\r" + message.ljust(meter_width),
+                    end="",
+                    flush=True,
+                )
+                meter_width = max(meter_width, len(message))
+
+            try:
+                value = m.run(
+                    halt,
+                    args.max_steps,
+                    progress=show_meter if args.hz_meter else None,
+                )
+            finally:
+                if args.hz_meter:
+                    show_meter(m)
+                    print(flush=True)
             print(
                 f"main returned {signed(value)} (r1=0x{value:08x}); {m.steps} instructions"
             )

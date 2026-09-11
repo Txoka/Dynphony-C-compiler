@@ -205,12 +205,22 @@ class Machine:
         self.pc = next_pc & MASK
         self.steps += 1
 
-    def run(self, halt_address=None, max_steps=5_000_000):
+    def run(
+        self,
+        halt_address=None,
+        max_steps=5_000_000,
+        progress=None,
+        progress_interval=250_000,
+    ):
+        next_progress = self.steps + progress_interval
         while self.steps < max_steps:
             if halt_address is not None and self.pc == halt_address:
                 return self.regs[1]
             previous = self.pc
             self.step()
+            if progress is not None and self.steps >= next_progress:
+                progress(self)
+                next_progress = self.steps + progress_interval
             if self.pc == previous:
                 return self.regs[1]
         raise RuntimeError(

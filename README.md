@@ -15,6 +15,17 @@ python -m dynphony examples/demo.c -o demo.bin --run
 
 Expected output includes `main returned 146`. Installing the package also provides the `dyncc` command. If `pycparser` is already installed, `python -m dynphony` works directly without installing the project.
 
+For long emulator runs, display live host-side instruction throughput and raise
+the safety limit as needed:
+
+```sh
+python -m dynphony examples/pi.c -o pi.bin --run \
+  --hz-meter --max-steps 100000000
+```
+
+The meter's Hz value is decoded Dynphony instructions executed per real second,
+not a simulated hardware clock frequency.
+
 Generate a position-independent image and execute it at another address:
 
 ```sh

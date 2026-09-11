@@ -1008,6 +1008,7 @@ class EncodingTests(unittest.TestCase):
                 "--run",
                 "--run-address",
                 "0x12345",
+                "--hz-meter",
                 "--map",
                 str(path / "map.json"),
                 "--emit-ir",
@@ -1016,6 +1017,7 @@ class EncodingTests(unittest.TestCase):
             result = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("returned 146", result.stdout)
+            self.assertIn(" Hz; PC=", result.stdout)
             self.assertTrue((path / "demo.bin").stat().st_size > 0)
             self.assertTrue(
                 json.loads((path / "map.json").read_text())["target"]["pic"]

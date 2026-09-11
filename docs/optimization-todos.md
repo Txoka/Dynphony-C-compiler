@@ -40,10 +40,13 @@ Next work, in priority order:
 5. [ ] Relocate a recursive function with exactly one external caller when this
    can be represented without body duplication. Keep a stable label for recursive
    calls and preserve the distinct outer and recursive return continuations.
+   Safe self-tail recursion is now converted to a loop and then relocated by the
+   ordinary one-caller pass. General non-tail recursion still requires distinct
+   frames and return continuations and remains pending.
 6. [x] Repeat the entire optimization cycle until no local instruction, CFG edge,
    reachable-function set, or call site changes. Startup's sole call to `main`
    then lets the ordinary one-caller rule absorb `main` and remove call/return overhead.
-7. [ ] Complete the no-growth algebraic identity set. Jump threading, adjacent
+7. [x] Complete the current no-growth algebraic identity set. Jump threading, adjacent
    trivial-block merging, and unreachable-block removal already run in the fixed point.
 8. [ ] Recognize matching quotient/remainder expressions with the same proven-pure
    operands and lower them to a two-result `divmod` IR operation. This should let
@@ -56,9 +59,9 @@ Next work, in priority order:
 11. [ ] Add bounded compile-time evaluation of side-effect-free calls with known
     arguments after the Tier 1 fixed point is stable. This can fold examples such
     as `factorial(5) + 22` without recursively duplicating code.
-12. [ ] Add SSA construction and sparse conditional constant propagation, followed
-    by block liveness, register reuse, local value numbering, and loop-invariant
-    code motion where each individual transform satisfies the Tier 1 policy.
+12. [x] Add transient SSA/phi analysis and sparse conditional constant propagation.
+    Block liveness, register reuse, local value numbering, and loop-invariant code
+    motion remain separate work where each transform must satisfy the Tier 1 policy.
 
 ## Deferred and optional work
 
@@ -104,7 +107,7 @@ Next work, in priority order:
 - [x] Fold constant branches.
 - [x] Remove arithmetic helpers when folding eliminates their last operation.
 - [x] Propagate constants conservatively within basic blocks.
-- [ ] Propagate constants across blocks using data-flow information.
+- [x] Propagate constants across blocks using data-flow information.
 
 ## 3. Copy propagation and algebraic simplification
 
@@ -115,22 +118,24 @@ Next work, in priority order:
 - [x] Simplify unsigned division and remainder by powers of two.
 - [x] Add the core identity set, including `x + 0`, `x - 0`, `x & 0`,
   `x | 0`, `x ^ x`, and shifts by zero.
-- [ ] Combine longer cast and copy chains across blocks.
+- [x] Combine immutable longer cast and copy chains across blocks while preserving
+  snapshots of mutable promoted locals.
 
 ## 4. Promote locals to IR values
 
 - [x] Promote scalar locals whose addresses do not escape.
 - [x] Keep arrays, aliased objects, and address-escaping locals in memory.
 - [x] Preserve assignments and loop-carried values with mutable virtual values.
-- [ ] Convert promoted locals to SSA form.
-- [ ] Insert phi nodes at control-flow joins.
+- [x] Construct transient SSA versions for promoted locals during sparse analysis.
+- [x] Model phi values at control-flow joins and lower the results back to ordinary
+  IR before code generation.
 
 ## 5. Sparse conditional constant propagation
 
-- [ ] Implement SSA-based sparse conditional constant propagation.
-- [ ] Propagate constants through phi nodes.
-- [ ] Discover executable edges while propagating values.
-- [ ] Remove blocks and edges proven unreachable.
+- [x] Implement SSA-based sparse conditional constant propagation.
+- [x] Propagate constants through transient phi joins.
+- [x] Discover executable edges while propagating values.
+- [x] Remove blocks and edges proven unreachable.
 
 ## 6. Register allocation across control flow
 
@@ -167,8 +172,11 @@ Next work, in priority order:
 
 - [x] Relocate arbitrary non-recursive single-call-site functions without duplicating their bodies.
 - [x] Inline small single-return leaf functions when they have one surviving call site.
-- [ ] Inline the `__dyn_udiv` and `__dyn_umod` wrappers when profitable.
+- [x] Legalize surviving software arithmetic to explicit runtime calls and inline
+  the `__dyn_udiv` and `__dyn_umod` wrappers when they have one surviving use.
 - [x] Re-run constant propagation, CFG cleanup, reachability, and dead-code elimination after inlining.
+- [x] Convert tail calls inside relocated callees back into calls to the outer
+  continuation, then rerun tail-call and CFG cleanup in the global fixed point.
 - [ ] Limit recursive and mutually recursive inlining.
 
 ## 10. Backend relaxation and peephole optimization
@@ -226,9 +234,12 @@ memory behavior.
 ## Recursion and tail calls
 
 - [x] Eliminate direct self-tail calls when the caller has no addressable local object that may escape.
+- [x] Snapshot tail-call arguments in parallel, rewrite safe self-tail recursion
+  as a CFG backedge, and let single-caller relocation absorb the resulting loop.
 - [x] Eliminate safe sibling tail calls under the same frame-lifetime constraint.
 - [x] Perform parallel argument moves without clobbering inputs.
-- [ ] Combine tail-call elimination with inlining and control-flow cleanup.
+- [x] Combine tail-call elimination with inlining and control-flow cleanup in
+  every global fixed-point iteration.
 
 General non-tail recursion is intentionally outside the loop-conversion task: it
 requires preserving pending call state, normally through the machine stack or an

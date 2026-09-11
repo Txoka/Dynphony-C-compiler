@@ -59,7 +59,7 @@ Static constant evaluation operates on the typed AST and applies width/sign norm
 
 ## Software arithmetic
 
-Multiplication shifts the multiplier right and adds selected shifted multiplicands. Unsigned division uses 32 rounds of restoring division; retaining the carry from the partial remainder avoids losing the 33rd bit. Signed wrappers convert operand bit patterns to unsigned magnitudes and restore the quotient/remainder signs. There is no hardware multiplication, division, or host-side execution shortcut in generated images.
+Multiplication shifts the multiplier right and adds selected shifted multiplicands. Unsigned division uses 32 rounds of restoring division; retaining the carry from the partial remainder avoids losing the 33rd bit. Signed wrappers convert operand bit patterns to unsigned magnitudes and restore the quotient/remainder signs. After target-independent folding and strength reduction, Dynphony legalization turns surviving software arithmetic into explicit runtime calls and reruns the global optimizer, allowing ordinary call-graph cleanup and wrapper relocation. There is no hardware multiplication, division, or host-side execution shortcut in generated images.
 
 ## Extending the compiler
 

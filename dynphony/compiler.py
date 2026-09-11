@@ -5,6 +5,7 @@ from .frontends.c import CFrontend
 from .frontends.protocol import SourceFrontend
 from .middle.passes import optimize
 from .targets.dynphony import generate, Target
+from .targets.dynphony.legalize import legalize_runtime_arithmetic
 
 
 @dataclass
@@ -23,6 +24,8 @@ class Compiler:
     def compile(self, source: str, filename: str = "<input>") -> Compilation:
         frontend = self.frontend.lower(source, filename)
         ir = optimize(frontend.ir)
+        legalize_runtime_arithmetic(ir)
+        ir = optimize(ir)
         return Compilation(
             frontend.parsed,
             frontend.typed,

@@ -568,12 +568,13 @@ class EncodingTests(unittest.TestCase):
         self.assertNotIn("move_one", result.image.symbols)
         self.assertIn("cbranch_if", result.ir.dump())
         self.assertIn("direct_call", result.ir.dump())
-        self.assertIn("direct_tailcall", result.ir.dump())
+        self.assertNotIn("direct_tailcall", result.ir.dump())
+        self.assertIn("move_pile.tail_loop", result.ir.dump())
         self.assertNotIn("global_addr () move_pile", result.ir.dump())
         self.assertNotIn("main", result.image.symbols)
         self.assertEqual(result.image.frames["_start"], 4)
-        self.assertLessEqual(len(result.image.binary), 270)
-        self.assertEqual(machine.steps, 314)
+        self.assertLessEqual(len(result.image.binary), 260)
+        self.assertEqual(machine.steps, 272)
 
     def test_arena_allocator_example(self):
         source = (ROOT / "examples/arena_allocator.c").read_text()
@@ -645,6 +646,57 @@ class EncodingTests(unittest.TestCase):
         self.assertNotIn("function main", result.ir.dump())
         machine = Machine(result.image.binary, 256)
         self.assertEqual(machine.run(result.image.symbols["_halt"]), 8)
+
+    def test_sccp_propagates_promoted_locals_across_cfg_joins(self):
+        source = """int main(void) {
+            int value = 4;
+            if (input()) value = 4; else value = 4;
+            return value * 3;
+        }"""
+        result = compile_source(source)
+        self.assertNotIn(" branch_", result.ir.dump())
+        self.assertNotIn(" binary ", result.ir.dump())
+        for input_value in (0, 1):
+            machine = Machine(result.image.binary, inputs=[input_value])
+            self.assertEqual(machine.run(result.image.symbols["_halt"]), 12)
+
+    def test_sccp_removes_infeasible_edge_and_callee(self):
+        result = compile_source(
+            "int unused(void){return input();} "
+            "int main(void){int x=1;if(x)x=6;else return unused();return x+1;}"
+        )
+        self.assertNotIn("unused", result.image.symbols)
+        machine = Machine(result.image.binary)
+        self.assertEqual(machine.run(result.image.symbols["_halt"]), 7)
+
+    def test_runtime_arithmetic_is_explicit_call_ir(self):
+        result = compile_source(
+            "int main(void){unsigned int a=input(),b=input();return a/b;}"
+        )
+        self.assertNotRegex(result.ir.dump(), r"binary .* / ")
+        self.assertNotIn("__dyn_udiv", result.image.symbols)
+        machine = Machine(result.image.binary, inputs=[100, 7])
+        self.assertEqual(machine.run(result.image.symbols["_halt"]), 14)
+
+    def test_single_caller_tail_recursion_becomes_relocated_loop(self):
+        result = compile_source(
+            "int sum(int n,int total){if(!n)return total;return sum(n-1,total+n);} "
+            "int main(void){return sum(input(),0);}"
+        )
+        self.assertNotIn("function sum", result.ir.dump())
+        self.assertNotIn("sum", result.image.symbols)
+        self.assertNotIn("direct_tailcall", result.ir.dump())
+        machine = Machine(result.image.binary, inputs=[10])
+        self.assertEqual(machine.run(result.image.symbols["_halt"]), 55)
+
+    def test_no_growth_comparison_and_division_identities(self):
+        result = compile_source(
+            "int main(void){int x=input();return (x==x)+(x!=x)+(x/1)+(x%1);}"
+        )
+        self.assertNotIn("__dyn_sdiv", result.image.symbols)
+        self.assertNotIn("__dyn_smod", result.image.symbols)
+        machine = Machine(result.image.binary, inputs=[41])
+        self.assertEqual(machine.run(result.image.symbols["_halt"]), 42)
 
     def test_tier_one_algebraic_identities_reach_fixed_point(self):
         result = compile_source(
@@ -790,11 +842,13 @@ class EncodingTests(unittest.TestCase):
     def test_cli(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d)
+            source = path / "demo.c"
+            source.write_text("int main(void){return 146;}\n")
             cmd = [
                 sys.executable,
                 "-m",
                 "dynphony",
-                str(ROOT / "examples/demo.c"),
+                str(source),
                 "-o",
                 str(path / "demo.bin"),
                 "--pic",

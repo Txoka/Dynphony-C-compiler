@@ -262,6 +262,176 @@ def propagate_and_fold(function):
     function.instructions = rewritten
 
 
+def propagate_global_copies(function):
+    """Collapse immutable copy/cast chains across basic-block boundaries."""
+    definitions = _definitions(function)
+    aliases = {}
+    for value, items in definitions.items():
+        if len(items) != 1 or items[0].op not in ("copy", "cast"):
+            continue
+        source = items[0].args[0]
+        if len(definitions.get(source, ())) == 1 and (
+            items[0].op == "copy"
+            or definitions[source][0].type.size == items[0].type.size
+        ):
+            aliases[value] = source
+
+    def resolve(value):
+        seen = set()
+        while value in aliases and value not in seen:
+            seen.add(value)
+            value = aliases[value]
+        return value
+
+    changed = False
+    rewritten = []
+    for instruction in function.instructions:
+        args = tuple(resolve(value) for value in instruction.args)
+        if args != instruction.args:
+            changed = True
+            instruction = Instruction(
+                instruction.op, instruction.dst, args, instruction.type, instruction.extra
+            )
+        rewritten.append(instruction)
+    function.instructions = rewritten
+    return changed
+
+
+def sparse_conditional_constant_propagation(function):
+    """Propagate constants through CFG joins and discover executable edges.
+
+    Promoted mutable virtuals are treated as SSA variables internally: each
+    predecessor contributes its outgoing version and the meet at a join is the
+    corresponding phi value.  The temporary SSA/phi state is rewritten back to
+    ordinary IR constants and branches, so the backend needs no phi lowering.
+    """
+    cfg = build_cfg(function)
+    if not cfg.blocks:
+        return False
+    unknown, varying = object(), object()
+    incoming = [{} for _ in cfg.blocks]
+    outgoing = [{} for _ in cfg.blocks]
+    reachable = {0}
+    executable_edges = set()
+
+    def meet(values):
+        result = unknown
+        for value in values:
+            if value is unknown:
+                continue
+            if result is unknown:
+                result = value
+            elif result is varying or value is varying or result != value:
+                return varying
+        return result
+
+    def evaluate(instruction, env):
+        if instruction.op == "const":
+            return _normalize(instruction.extra, instruction.type)
+        args = [env.get(value, unknown) for value in instruction.args]
+        if instruction.op == "copy" and args:
+            return args[0]
+        if instruction.op == "cast" and args and args[0] not in (unknown, varying):
+            return _normalize(args[0], instruction.type)
+        if instruction.op == "unary" and args and args[0] not in (unknown, varying):
+            folded = _fold_unary(instruction.extra, args[0], instruction.type)
+            return varying if folded is None else folded
+        if instruction.op == "binary" and all(v not in (unknown, varying) for v in args):
+            folded = _fold_binary(instruction.extra, args[0], args[1], instruction.type)
+            return varying if folded is None else folded
+        return varying if instruction.dst is not None else unknown
+
+    changed = True
+    while changed:
+        changed = False
+        for block in cfg.blocks:
+            if block.index not in reachable:
+                continue
+            if block.index:
+                predecessors = [
+                    outgoing[p]
+                    for p in block.predecessors
+                    if (p, block.index) in executable_edges
+                ]
+                if not predecessors:
+                    continue
+                keys = set().union(*(state.keys() for state in predecessors))
+                state = {
+                    key: meet([item.get(key, unknown) for item in predecessors])
+                    for key in keys
+                }
+            else:
+                state = {}
+            if state != incoming[block.index]:
+                incoming[block.index] = state
+                changed = True
+            env = dict(state)
+            for instruction in block.instructions:
+                if instruction.dst is not None:
+                    env[instruction.dst] = evaluate(instruction, env)
+            if env != outgoing[block.index]:
+                outgoing[block.index] = env
+                changed = True
+
+            last = next((i for i in reversed(block.instructions) if i.op != "label"), None)
+            successors = set(block.successors)
+            if last is not None and last.op in ("branch_if", "cbranch_if"):
+                if last.op == "branch_if":
+                    condition = env.get(last.args[0], unknown)
+                    result = bool(condition) if condition not in (unknown, varying) else condition
+                else:
+                    values = [env.get(v, unknown) for v in last.args]
+                    result = (
+                        bool(_fold_binary(last.extra[0], values[0], values[1], last.type))
+                        if all(v not in (unknown, varying) for v in values)
+                        else varying if varying in values else unknown
+                    )
+                if result not in (unknown, varying):
+                    target = cfg.label_blocks[last.extra[1]]
+                    taken = result == (last.extra[0] if last.op == "branch_if" else True)
+                    successors = {target} if taken else successors - {target}
+                elif result is unknown:
+                    successors = set()
+            for successor in successors:
+                edge = (block.index, successor)
+                if edge not in executable_edges:
+                    executable_edges.add(edge)
+                    reachable.add(successor)
+                    changed = True
+
+    original = tuple(function.instructions)
+    rewritten = []
+    for block in cfg.blocks:
+        if block.index not in reachable:
+            continue
+        env = dict(incoming[block.index])
+        for instruction in block.instructions:
+            value = evaluate(instruction, env) if instruction.dst is not None else unknown
+            if instruction.dst is not None:
+                env[instruction.dst] = value
+                if (
+                    value not in (unknown, varying)
+                    and instruction.op in ("copy", "cast", "unary", "binary")
+                ):
+                    instruction = Instruction(
+                        "const", instruction.dst, (), instruction.type, value
+                    )
+            if instruction.op in ("branch_if", "cbranch_if"):
+                live = {
+                    successor
+                    for predecessor, successor in executable_edges
+                    if predecessor == block.index
+                }
+                target = cfg.label_blocks[instruction.extra[1]]
+                if target not in live:
+                    continue
+                if len(live) == 1:
+                    instruction = Instruction("jump", extra=instruction.extra[1])
+            rewritten.append(instruction)
+    function.instructions = rewritten
+    return tuple(function.instructions) != original
+
+
 def simplify_control_flow(function):
     """Fold constant branches and discard unreachable instructions/blocks."""
     original = tuple(function.instructions)
@@ -474,14 +644,14 @@ def inline_single_call_functions(module):
             and len(call_sites[function.name]) == 1
             and call_sites[function.name][0][0] is not function
             and not any(
-                i.op in ("startup", "halt", "tailcall", "direct_tailcall")
+                i.op in ("startup", "halt")
                 for i in function.instructions
             )
         ):
             candidates[function.name] = function
 
     changed = False
-    inline_id = 0
+    inline_id = getattr(module, "_inline_serial", 0)
     for caller in module.functions:
         definitions = {
             instruction.dst: instruction
@@ -500,6 +670,7 @@ def inline_single_call_functions(module):
 
             changed = True
             inline_id += 1
+            module._inline_serial = inline_id
             base = caller.values
             mapping = {value: base + value for value in range(callee.values)}
             caller.values += callee.values
@@ -543,6 +714,29 @@ def inline_single_call_functions(module):
             for instruction in callee.instructions:
                 if instruction.op == "param":
                     mapping[instruction.dst] = call_arguments[instruction.extra[0] - 1]
+                    continue
+                if instruction.op in ("tailcall", "direct_tailcall"):
+                    result = caller.values
+                    caller.values += 1
+                    rewritten.append(
+                        Instruction(
+                            "call" if instruction.op == "tailcall" else "direct_call",
+                            result if instruction.type.kind != "void" else None,
+                            tuple(mapping[value] for value in instruction.args),
+                            instruction.type,
+                            instruction.extra,
+                        )
+                    )
+                    if call_instruction.dst is not None and instruction.type.kind != "void":
+                        rewritten.append(
+                            Instruction(
+                                "copy",
+                                call_instruction.dst,
+                                (result,),
+                                call_instruction.type,
+                            )
+                        )
+                    rewritten.append(Instruction("jump", extra=continuation))
                     continue
                 if instruction.op == "return":
                     if call_instruction.dst is not None and instruction.args:
@@ -623,6 +817,56 @@ def eliminate_tail_calls(function):
                 )
         rewritten.append(instruction)
     function.instructions = rewritten
+
+
+def lower_self_tail_calls_to_loops(function):
+    """Turn safe direct self-tail calls into parallel updates and a backedge."""
+    recursive = [
+        instruction
+        for instruction in function.instructions
+        if instruction.op == "direct_tailcall" and instruction.extra == function.name
+    ]
+    if not recursive:
+        return False
+    parameters = sorted(
+        (instruction for instruction in function.instructions if instruction.op == "param"),
+        key=lambda instruction: instruction.extra[0],
+    )
+    if any(len(instruction.args) != len(parameters) for instruction in recursive):
+        return False
+    labels = {i.extra for i in function.instructions if i.op == "label"}
+    loop = f"{function.name}.tail_loop"
+    serial = 0
+    while loop in labels:
+        serial += 1
+        loop = f"{function.name}.tail_loop{serial}"
+
+    rewritten = []
+    inserted = False
+    for instruction in function.instructions:
+        if not inserted and instruction.op != "param":
+            rewritten.append(Instruction("label", extra=loop))
+            inserted = True
+        if instruction.op == "direct_tailcall" and instruction.extra == function.name:
+            snapshots = []
+            for argument, parameter in zip(instruction.args, parameters):
+                value = function.values
+                function.values += 1
+                rewritten.append(
+                    Instruction("copy", value, (argument,), parameter.type)
+                )
+                snapshots.append(value)
+            for value, parameter in zip(snapshots, parameters):
+                rewritten.append(
+                    Instruction("copy", parameter.dst, (value,), parameter.type)
+                )
+            rewritten.append(Instruction("jump", extra=loop))
+        else:
+            rewritten.append(instruction)
+    if not inserted:
+        rewritten.append(Instruction("label", extra=loop))
+    function.instructions = rewritten
+    return True
 
 
 def promote_readonly_parameters(function):
@@ -819,6 +1063,20 @@ def simplify_algebra(function):
             replacement = Instruction("const", instruction.dst, (), instruction.type, 0)
         elif left == right and operator in ("&", "|"):
             replacement = Instruction("copy", instruction.dst, (left,), instruction.type)
+        elif left == right and operator in ("==", "<=", ">="):
+            replacement = Instruction("const", instruction.dst, (), instruction.type, 1)
+        elif left == right and operator in ("!=", "<", ">"):
+            replacement = Instruction("const", instruction.dst, (), instruction.type, 0)
+        elif right_constant == 1 and operator == "/":
+            replacement = Instruction("copy", instruction.dst, (left,), instruction.type)
+        elif right_constant in (1, -1) and operator == "%":
+            replacement = Instruction("const", instruction.dst, (), instruction.type, 0)
+        elif operator == "|" and right_constant is not None:
+            mask = (1 << (instruction.type.size * 8)) - 1
+            if right_constant & mask == mask:
+                replacement = Instruction(
+                    "const", instruction.dst, (), instruction.type, right_constant & mask
+                )
         elif operator == "&" and right_constant is not None:
             mask = (1 << (instruction.type.size * 8)) - 1
             if right_constant & mask == mask:
@@ -936,6 +1194,8 @@ def _optimize_functions(functions):
         lower_intrinsics(function)
         identify_direct_calls(function)
         promote_scalar_locals(function)
+        sparse_conditional_constant_propagation(function)
+        propagate_global_copies(function)
         propagate_and_fold(function)
         simplify_control_flow(function)
         simplify_algebra(function)
@@ -968,6 +1228,7 @@ def optimize(module):
         inline_single_call_functions(current)
         for function in current.functions:
             eliminate_tail_calls(function)
+            lower_self_tail_calls_to_loops(function)
             thread_jumps(function)
             simplify_control_flow(function)
             remove_dead_values(function)

@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dynphony-c"
+version = "0.7.0"
+description = "A small typed C compiler targeting the Dynphony ISA"
+requires-python = ">=3.10"
+dependencies = ["pycparser>=2.21,<3"]
+
+[project.scripts]
+dyncc = "dynphony.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["dynphony*"]

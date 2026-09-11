@@ -1,0 +1,36 @@
+{
+  "target": {
+    "ram_size": 16777216,
+    "persistent_size": 0,
+    "load_address": 0,
+    "pic": false
+  },
+  "image_size": 804,
+  "symbols": {
+    "_start": 0,
+    "_start.inline1.main.L1": 56,
+    "_start.inline1.main.L2": 93,
+    "_start.inline1.main.L4": 196,
+    "_halt": 284,
+    "__dyn_mul": 288,
+    "__dyn_mul.L1": 351,
+    "__dyn_mul.L2": 397,
+    "__dyn_mul.L5": 453,
+    "__dyn_mul.L6": 496,
+    "__dyn_mul.L7": 496,
+    "__dyn_mul.L4": 576,
+    "@backend.2": 579,
+    "factorial": 627,
+    "factorial.L1": 674,
+    "factorial.L2": 693,
+    "@backend.3": 766,
+    "values": 784,
+    "start": 800
+  },
+  "frame_sizes": {
+    "_start": 32,
+    "__dyn_mul": 40,
+    "factorial": 8
+  },
+  "symbol_addressing": "absolute addresses"
+}

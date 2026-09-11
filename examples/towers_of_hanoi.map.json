@@ -1,0 +1,25 @@
+{
+  "target": {
+    "ram_size": 16777216,
+    "persistent_size": 0,
+    "load_address": 0,
+    "pic": false
+  },
+  "image_size": 348,
+  "symbols": {
+    "_start": 0,
+    "_halt": 64,
+    "move_pile": 68,
+    "move_pile.L1": 145,
+    "move_pile.L2": 199,
+    "move_pile.L3": 199,
+    "move_pile.L4": 256,
+    "move_pile.L5": 310,
+    "@backend.2": 310
+  },
+  "frame_sizes": {
+    "_start": 4,
+    "move_pile": 20
+  },
+  "symbol_addressing": "absolute addresses"
+}

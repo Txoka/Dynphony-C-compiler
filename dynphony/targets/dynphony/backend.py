@@ -706,6 +706,8 @@ class Backend:
             elif op == "stack_alloc":
                 self.get(i.args[0], 1)
                 self.needs_stack_overflow = True
+                a.emit(isa.alu("cmp", 15, 1, 0))
+                a.branch("je", "_stack_overflow")
                 if self.target.ram_size < 2**32:
                     a.emit(isa.cheap_constant(7, self.target.ram_size))
                     a.emit(isa.alu("cmp", 15, 1, 7))
@@ -724,17 +726,17 @@ class Backend:
                 )
                 if heap is not None:
                     a.address(7, heap)
-                    a.emit(isa.load(4, 3, 7))
+                    a.emit(isa.load(4, 1, 7))
                     have_heap = self.unique()
-                    a.emit(isa.alu("cmp", 15, 3, 0))
+                    a.emit(isa.alu("cmp", 15, 1, 0))
                     a.branch("jne", have_heap)
-                a.address(3, "__dyn_heap_anchor", 7)
-                a.emit(isa.alu("add", 3, 3, 3, True))
+                a.address(1, "__dyn_heap_anchor", 7)
+                a.emit(isa.alu("add", 1, 1, 3, True))
                 a.emit(isa.cheap_constant(7, -4))
-                a.emit(isa.alu("and", 3, 3, 7))
+                a.emit(isa.alu("and", 1, 1, 7))
                 if heap is not None:
                     a.label(have_heap)
-                a.emit(isa.alu("cmp", 15, 2, 3))
+                a.emit(isa.alu("cmp", 15, 2, 1))
                 a.branch("jb", "_stack_overflow")
                 a.emit(isa.mov(14, 2))
                 a.emit(isa.mov(1, 2))
@@ -981,6 +983,9 @@ class Backend:
             self.function(f)
         if self.needs_stack_overflow:
             a.label("_stack_overflow")
+            overflow_loop = self.unique()
+            a.branch("jmp", overflow_loop)
+            a.label(overflow_loop)
             a.branch("jmp", "_stack_overflow")
         for g in self.module.globals:
             if g.reserved and not self.target.include_framebuffer:

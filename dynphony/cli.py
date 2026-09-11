@@ -19,7 +19,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(
         prog="dyncc", description="Compile a C subset to a Dynphony raw binary"
     )
-    p.add_argument("source", type=Path, nargs="+")
+    p.add_argument("source", type=Path, nargs="+", help="one or more C source files")
     p.add_argument("-o", "--output", type=Path, default=Path("a.bin"))
     p.add_argument(
         "-I", dest="include_dirs", action="append", type=Path, default=[],

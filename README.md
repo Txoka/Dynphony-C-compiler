@@ -13,6 +13,19 @@ python -m pip install -e .
 python -m dynphony examples/demo.c -o demo.bin --run
 ```
 
+Compile and link a project from multiple translation units, with project headers
+and command-line macros:
+
+```sh
+dyncc src/main.c src/parser.c src/backend.c \
+  -I include -D DYN_DEBUG=1 -o compiler.bin
+```
+
+Each source file is preprocessed and type-checked in its own translation-unit
+scope. External functions and objects are resolved across the project, while
+file-scope `static` definitions remain private. The linked program is optimized
+as one unit before the final flat image is laid out.
+
 Expected output includes `main returned 146`. Installing the package also provides the `dyncc` command. If `pycparser` is already installed, `python -m dynphony` works directly without installing the project.
 
 For long emulator runs, display live host-side instruction throughput and raise
@@ -43,7 +56,7 @@ that the tag matches `pyproject.toml`, runs the test suite, builds and smoke-tes
 CPython 3.10–3.15 wheels for mainstream Linux x86_64/arm64, macOS Intel/Apple
 Silicon, and Windows AMD64/ARM64 targets, builds an sdist, and attaches every
 distribution to a GitHub Release.
-Create a release with, for example, `git tag v0.13.0 && git push origin v0.13.0`.
+Create a release with, for example, `git tag v0.13.1 && git push origin v0.13.1`.
 
 Generate a position-independent image and execute it at another address:
 
@@ -76,7 +89,7 @@ are documented in [docs/c-language-support.md](docs/c-language-support.md).
 
 - Plain `char` is unsigned; explicit signed/unsigned `char`, `short`, `int`, and `long` are supported.
 - Pointers, pointers to pointers, function pointers, explicit integer/pointer casts, and `void` functions/pointers.
-- Local variables and lexical scopes; file-scope globals, `static` globals/functions, static locals, external declarations resolved within this translation unit, and file/block-scope typedefs.
+- Local variables and lexical scopes; file-scope globals, `static` globals/functions, static locals, external declarations resolved across linked translation units, and file/block-scope typedefs.
 - Named and anonymous structures, self-referential structure pointers, natural member layout, `.`/`->`, nested structure/array members, and brace initialization for structure objects.
 - Enumerations with implicit or integer-constant enumerator values.
 - `const` objects and pointers with qualifier-preserving conversions and modification diagnostics.
@@ -163,12 +176,18 @@ reserved and cannot be used for user-defined functions.
 
 This is a C subset compiler, not a conforming full C implementation. Unsupported constructs produce diagnostics where encountered:
 
-- No preprocessor (`#include`, `#define`, etc.), headers, hosted standard library,
-  or separate linking. A compact freestanding memory runtime is bundled.
+- The built-in preprocessor supports includes, object/function macros,
+  conditional compilation, `#undef`, `#pragma once`, and `#error`. Macro
+  stringification, token pasting, variadic macros, and a hosted standard library
+  remain unsupported. Minimal freestanding `stdbool.h`, `stddef.h`, `stdint.h`,
+  `stdlib.h`, and `string.h` headers are provided.
+- Multiple source translation units link directly into one optimized flat image.
+  Serializable object files, archives, dynamic linking, and incremental linking
+  are not yet implemented.
 - No 64-bit `long long`, floating point, unions, bit-fields, or variadic functions.
-- No `volatile` or `restrict`, local `extern`, designated initializers, `switch`, `goto`, or inline assembly. VLAs support an outermost runtime bound; VLA `sizeof` and inner runtime bounds remain incomplete.
+- No `volatile` or `restrict`, local `extern`, designated initializers, `switch`, `goto`, or inline assembly.
 - No aggregate arguments/returns or old-style function definitions.
-- Structure assignment is not implemented. Aggregate initializers require nested braces; brace elision and designated initialization are not implemented. Array bounds must be compile-time constants. Multiple tentative global definitions are rejected rather than merged.
+- Structure assignment is not implemented. Aggregate initializers require nested braces; brace elision and designated initialization are not implemented. Non-VLA array bounds must be compile-time constants. Multiple tentative global definitions are rejected rather than merged.
 - Decimal literals above `2147483647` need an explicit `U` suffix because unsuffixed decimal values would require an unsupported 64-bit C type. Write the minimum signed integer as `(-2147483647 - 1)` or cast `0x80000000u`.
 - Strings use ordinary single-byte characters and escapes; no wide/Unicode literal types. String literals reside in writable unified memory, but modifying one is still C undefined behavior.
 - The optimizer promotes non-escaping scalar locals, propagates copies and constants, folds scalar expressions, simplifies control flow, rematerializes constants and addresses, selects immediate ALU forms, removes unused pure values and functions, strength-reduces power-of-two arithmetic, and includes only reachable arithmetic helpers.

@@ -77,19 +77,15 @@ Remaining work, in dependency and payoff order:
 9. [ ] Extend singleton function-pointer recognition through immutable global loads.
    Local single-target pointers already reduce to direct calls after copy propagation.
    Keep guarded multi-target devirtualization deferred because it can grow code.
-10. [ ] Implement the memory-runtime work (`mem*`, heap, and allocation) independently
-    of optimizer correctness; retain collision checks as an opt-in target policy.
+10. [x] Implement the memory runtime, heap allocation, overflow-safe VLA sizing,
+    and bidirectional heap/stack collision checks independently of optimizer correctness.
 
 ## Deferred and optional work
 
-- [ ] Add an opt-in stack/heap collision guard, disabled by default so normal
-  freestanding output retains its current cost and behavior. The guard should
-  check a proposed dynamic stack allocation before changing `sp`, reject address
-  wraparound, and jump to a named infinite `_stack_overflow` halt loop on VLA
-  exhaustion. A future heap runtime should use the same boundary from the
-  opposite direction and return `NULL` from `malloc` on collision. Decide the
-  public target option and failure-hook policy before implementation; do not
-  silently add checks to ordinary release output.
+- [x] Guard dynamic stack allocation against zero/overflowed sizes, address
+  wraparound, static data, and the live heap boundary. Invalid VLA allocation
+  enters the named `_stack_overflow` loop; heap growth returns `NULL` when it
+  reaches the live stack.
 - [ ] Defer guarded multi-target function-pointer devirtualization. Continue using
   conservative address-taken reachability when a singleton target cannot be proven.
 - [ ] Defer PIC startup self-relocation. If implemented later, place it behind an

@@ -18,19 +18,24 @@ from .parser import strip_comments
 
 
 BUILTIN_HEADERS = {
-    "stdbool.h": "#define bool _Bool\n#define true 1\n#define false 0\n",
-    "stddef.h": "typedef unsigned int size_t; typedef int ptrdiff_t; #define NULL ((void *)0)\n",
+    "stdbool.h": (
+        "#pragma once\n#define bool _Bool\n#define true 1\n#define false 0\n"
+    ),
+    "stddef.h": (
+        "#pragma once\ntypedef unsigned int size_t; typedef int ptrdiff_t;\n"
+        "#define NULL ((void *)0)\n"
+    ),
     "stdint.h": (
-        "typedef signed char int8_t; typedef unsigned char uint8_t; "
+        "#pragma once\ntypedef signed char int8_t; typedef unsigned char uint8_t; "
         "typedef short int16_t; typedef unsigned short uint16_t; "
         "typedef int int32_t; typedef unsigned int uint32_t;\n"
     ),
     "stdlib.h": (
-        "void *malloc(unsigned int); void free(void *); "
+        "#pragma once\nvoid *malloc(unsigned int); void free(void *); "
         "void *calloc(unsigned int,unsigned int); void *realloc(void *,unsigned int);\n"
     ),
     "string.h": (
-        "void *memcpy(void *,const void *,unsigned int); "
+        "#pragma once\nvoid *memcpy(void *,const void *,unsigned int); "
         "void *memmove(void *,const void *,unsigned int); "
         "void *memset(void *,int,unsigned int); "
         "int memcmp(const void *,const void *,unsigned int);\n"
@@ -193,12 +198,13 @@ class Preprocessor:
 
     def process(self, source, filename="<input>"):
         path = None if filename.startswith("<") else Path(filename).resolve()
-        if path in self.once:
+        identity = path or (filename if filename != "<input>" else None)
+        if identity in self.once:
             return ""
-        if path in self.active_files:
-            raise CompileError(f"recursive include: {path}")
-        if path:
-            self.active_files.append(path)
+        if identity in self.active_files:
+            raise CompileError(f"recursive include: {identity}")
+        if identity:
+            self.active_files.append(identity)
         source = strip_comments(source)
         physical = source.splitlines(keepends=True)
         lines = []
@@ -287,8 +293,8 @@ class Preprocessor:
                 elif active and directive == "undef":
                     self.macros.pop(rest, None)
                 elif active and directive == "pragma" and rest == "once":
-                    if path:
-                        self.once.add(path)
+                    if identity:
+                        self.once.add(identity)
                 elif active and directive == "error":
                     raise CompileError(f"{filename}:{line_number}: {rest or '#error'}")
                 elif active and directive not in ("",):
@@ -298,7 +304,7 @@ class Preprocessor:
                 raise CompileError(f"{filename}: unterminated conditional directive")
             return "".join(output)
         finally:
-            if path:
+            if identity:
                 self.active_files.pop()
 
 

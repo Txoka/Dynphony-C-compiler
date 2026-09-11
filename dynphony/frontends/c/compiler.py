@@ -20,6 +20,53 @@ from .parser import parse, strip_comments
 from .preprocessor import Preprocessor
 
 
+def compatible_types(a, b, seen=None):
+    """C-compatible cross-unit type comparison, including recursive structs."""
+    seen = set() if seen is None else seen
+    pair = (id(a), id(b))
+    if pair in seen:
+        return True
+    seen.add(pair)
+    if a.kind != b.kind:
+        return (
+            a.kind in ("array", "vla")
+            and b.kind in ("array", "vla")
+            and compatible_types(a.base, b.base, seen)
+        )
+    if a.qualifiers != b.qualifiers:
+        return False
+    if a.kind in ("int", "bool", "void"):
+        return a.size == b.size and a.signed == b.signed
+    if a.kind == "pointer":
+        return compatible_types(a.base, b.base, seen)
+    if a.kind == "array":
+        return a.count == b.count and compatible_types(a.base, b.base, seen)
+    if a.kind == "vla":
+        return compatible_types(a.base, b.base, seen)
+    if a.kind == "function":
+        return (
+            compatible_types(a.base, b.base, seen)
+            and len(a.params) == len(b.params)
+            and all(
+                compatible_types(x, y, seen)
+                for x, y in zip(a.params, b.params)
+            )
+        )
+    if a.kind == "struct":
+        return (
+            a.record.tag == b.record.tag
+            and a.size == b.size
+            and len(a.record.members) == len(b.record.members)
+            and all(
+                xn == yn and xo == yo and compatible_types(xt, yt, seen)
+                for (xn, xt, xo), (yn, yt, yo) in zip(
+                    a.record.members, b.record.members
+                )
+            )
+        )
+    return a == b
+
+
 def link_programs(programs):
     """Resolve independently checked translation units into one typed program."""
     globals_ = []
@@ -29,7 +76,9 @@ def link_programs(programs):
     for program in programs:
         for key, symbol in program.symbols.items():
             previous = symbols.get(key)
-            if previous is not None and previous.type != symbol.type:
+            if previous is not None and not compatible_types(
+                previous.type, symbol.type
+            ):
                 raise CompileError(f"conflicting declarations of {symbol.name}")
             symbols.setdefault(key, symbol)
         for global_ in program.globals:
@@ -78,6 +127,10 @@ class CFrontend:
                 raise CompileError("identifiers beginning __dyn_ are reserved for the runtime")
             processor = Preprocessor(self.include_dirs, self.defines)
             processed = processor.process(source, filename)
+            if re.search(r"\b__dyn_\w*", processed):
+                raise CompileError(
+                    "identifiers beginning __dyn_ are reserved for the runtime"
+                )
             parsed = parse(
                 "typedef _Bool bool;\n" + PROTOTYPES + LIBRARY_PROTOTYPES + processed,
                 filename,

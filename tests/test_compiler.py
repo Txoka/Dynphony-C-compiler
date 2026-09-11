@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from dynphony import CompileError, Target, compile_source
+from dynphony import CompileError, Target, compile_source, compile_sources
 from dynphony.emulator import Machine, signed
 from dynphony.frontend import parse, typecheck
 from dynphony.ir import lower
@@ -621,11 +621,60 @@ class ExecutionTests(unittest.TestCase):
         run("/*head*/int main(void){// line\n return 010 + 0x10 + 'A';}", 89)
         run('int main(void){char *s="/*not a comment*/"; return s[0];}', 47)
 
+    def test_preprocessor_headers_macros_and_conditionals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "config.h").write_text(
+                "#pragma once\n#define SCALE(x) ((x) * FACTOR)\n"
+                "#if FACTOR == 3\n#define OFFSET 4\n#else\n"
+                "#error wrong factor\n#endif\n"
+            )
+            result = compile_sources(
+                [
+                    (
+                        "main.c",
+                        '#include <stdint.h>\n#include "config.h"\n'
+                        "int main(void){uint32_t x=SCALE(5);return x+OFFSET;}\n",
+                    )
+                ],
+                include_dirs=[root],
+                defines=["FACTOR=3"],
+            )
+            machine = Machine(result.image.binary)
+            self.assertEqual(machine.run(result.image.symbols["_halt"]), 19)
+
+    def test_multidimensional_vla_sizeof_typedef_and_parameter_stride(self):
+        run(
+            """int inspect(unsigned int rows, unsigned int columns,
+                           int values[rows][columns]) {
+                   return sizeof(*values) + values[1][2];
+               }
+               int main(void) {
+                   unsigned int rows=input(), columns=input();
+                   typedef int Row[columns];
+                   Row values[rows];
+                   values[1][2]=37;
+                   return sizeof(values)+inspect(rows,columns,values);
+               }""",
+            73,
+            inputs=(2, 3),
+        )
+
+    def test_vla_overflow_enters_stack_overflow_trap(self):
+        result = compile_source(
+            "int main(void){unsigned int n=input(); "
+            "int values[n][n]; return values[0][0];}"
+        )
+        machine = Machine(result.image.binary, inputs=(65536,))
+        with self.assertRaisesRegex(RuntimeError, "execution limit"):
+            machine.run(result.image.symbols["_halt"], max_steps=20000)
+        self.assertNotEqual(machine.pc, result.image.symbols["_halt"])
+        self.assertIn("_stack_overflow", result.image.symbols)
+
 
 class DiagnosticTests(unittest.TestCase):
     def test_rejections(self):
         cases = [
-            ("#define X 1\nint main(void){return X;}", "preprocessor"),
             ("int main(void){return missing;}", "undeclared"),
             ("int main(void){float x=1.0;return 0;}", "only integer"),
             ("int main(void){long long x;return 0;}", "64-bit"),

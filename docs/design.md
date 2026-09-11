@@ -8,7 +8,11 @@ device declarations and arithmetic runtime source, semantic analysis, and
 lowering. A future frontend can implement the same source-to-`ModuleIR` protocol
 without importing pycparser or changing middle-end and Dynphony target modules.
 
-`parse` uses pycparser's lexer/parser without running a preprocessor. A lexical comment pass preserves line breaks and string/character literals. Runtime helpers are parsed separately so diagnostics retain the user's filename and line numbers.
+Each translation unit first passes through the built-in token-aware preprocessor,
+then `parse` uses pycparser's lexer/parser. Translation units are type-checked in
+independent scopes and linked at the typed-program boundary; internal symbols are
+namespaced before the shared whole-program optimizer runs. Runtime helpers are
+parsed separately so diagnostics retain the user's filename and line numbers.
 
 `Frontend.build` collects function/global symbols, structure and enum tags, then checks global initializers and function bodies. Its result consists solely of project-owned `Type`, `Record`, `Symbol`, `Node`, `Global`, and `Function` records. Structure records are shared objects so an incomplete `struct Node` can be referenced through a pointer while its members are being completed. Member offsets, natural alignment, const qualification, implicit integer conversions, and array/function decay are explicit before IR lowering. Unsupported constructs fail here instead of reaching machine emission.
 

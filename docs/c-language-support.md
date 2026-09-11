@@ -1,8 +1,8 @@
 # C language and Dynphony extension reference
 
-Dynphony C implements a practical freestanding subset of C. It compiles one C
-source file directly into a flat Dynphony memory image; it does not invoke a
-preprocessor, assembler, system linker, or operating-system runtime.
+Dynphony C implements a practical freestanding subset of C. It preprocesses and
+links one or more C translation units into a flat Dynphony memory image without
+invoking a host assembler, system linker, or operating-system runtime.
 
 ## Implemented C features
 
@@ -47,8 +47,8 @@ signed-overflow undefined behavior.
 - Address-of, dereference, array indexing, pointer arithmetic, and pointer
   difference.
 - Conditional `?:` and comma expressions.
-- Unevaluated `sizeof expression` and `sizeof(type)` for fixed-size types. `sizeof`
-  of a VLA is not yet supported because it is a runtime expression in C.
+- `sizeof expression` and `sizeof(type)`, including declaration-time runtime
+  sizes for variably modified array types.
 
 Multiplication, division, and remainder use software helpers only when surviving
 optimized code needs them. Constant expressions and suitable power-of-two
@@ -65,8 +65,9 @@ operations do not pull those helpers into the image.
 - File-scope and block-scope `typedef` declarations, including normal shadowing.
 - Fixed-size arrays, multidimensional arrays, inferred outer bounds, partial
   brace initialization, and character-array initialization from strings.
-- Runtime-sized local arrays (VLAs) with an outermost variable bound, such as
-  `char bytes[count]` and `int matrix[rows][3]`. Storage is reserved when the
+- Runtime-sized local arrays (VLAs), including `char bytes[count]`,
+  `int matrix[rows][columns]`, pointer-to-VLA parameters, and VLA typedefs. Bounds
+  are evaluated once at declaration or function entry. Storage is reserved when the
   declaration executes and released when its block, loop, or function scope
   exits, including `break`, `continue`, and `return` paths.
 - Symbolic static pointer initializers such as `int *p = &values[2]`.
@@ -100,13 +101,13 @@ an empty parameter list means no parameters. Falling out of `main` returns zero.
 
 | Area | Missing support |
 |---|---|
-| Source processing | Preprocessor directives, `#include`, macros, conditional compilation, and source headers |
-| Separate compilation | Multiple translation units, object files, external libraries, and linking |
+| Source processing | Macro stringification/pasting, variadic macros, full hosted headers, and some implementation-specific directives |
+| Separate compilation | Serializable object files, archives, incremental linking, external binary libraries, and dynamic linking |
 | Types | `long long`, floating point, complex types, unions, and bit-fields |
 | Qualifiers/specifiers | `volatile`, `restrict`, `_Atomic`, thread-local storage, and local `extern` |
 | Aggregate operations | Structure assignment and structures passed to or returned from functions by value |
 | Initializers | Designated initializers and general brace elision |
-| Arrays | Flexible array members, VLA `sizeof`, and inner variable bounds such as `int matrix[3][columns]` |
+| Arrays | Flexible array members |
 | Control flow | `switch`/`case`/`default`, `goto`, and labels used by `goto` |
 | Functions | Variadic functions, old-style definitions, and aggregate calling conventions |
 | Hosted runtime | Standard headers, file I/O, locale, and the rest of a hosted C library |
@@ -114,7 +115,7 @@ an empty parameter list means no parameters. Falling out of `main` returns zero.
 | Low-level extensions | Inline assembly and compiler-specific attribute syntax |
 
 Multiple tentative definitions of one global are rejected rather than merged.
-Array bounds must be compile-time constants. Aggregate initialization requires
+Non-VLA array bounds must be compile-time constants. Aggregate initialization requires
 the currently supported nested-brace form. Decimal constants above `2147483647`
 need an explicit `U` suffix when their value fits `unsigned int`; values that
 require a 64-bit C type are unsupported.
@@ -127,12 +128,9 @@ pointer decay. The compiler also supports using a pointer as dynamic storage
 once application code obtains that pointer; `examples/arena_allocator.c` shows
 an aligned bump allocator built entirely in the supported subset.
 
-One related facility remains incomplete:
-
-- VLAs with an inner runtime bound, such as `int table[rows][columns]`, need
-  runtime stride metadata for pointer arithmetic. The current implementation
-  supports the common outer-bound form (`int table[rows][3]`) and keeps that
-  metadata-free design for now.
+VLA bounds and strides are saved when their declarations execute. Runtime size
+multiplication is overflow-checked; invalid zero-sized, overflowing, or
+heap-colliding dynamic stack allocations enter the `_stack_overflow` loop.
 
 The compiler supplies header-free `malloc`, `free`, `calloc`, `realloc`,
 `memcpy`, `memmove`, `memset`, and `memcmp`. Their size/count parameters are
@@ -144,10 +142,11 @@ allocation returns null; allocation failure and `calloc` multiplication overflow
 also return null. As in C, invalid frees, double frees, and overlapping `memcpy`
 arguments have undefined behavior; use `memmove` for overlap.
 
-Generated code does not trap null dereferences, out-of-bounds accesses, invalid
-shifts, division by zero, or stack overflow. Heap growth detects the current
-stack boundary, but a later unusually deep call can still collide with an
-existing allocation. The compiler
+Generated code does not trap null dereferences, ordinary out-of-bounds accesses,
+invalid shifts, division by zero, or fixed-frame/recursive stack exhaustion.
+Dynamic VLA allocation does trap size overflow and collision with static or heap
+storage. Heap growth detects the current stack boundary, but a later unusually
+deep ordinary call can still collide with an existing allocation. The compiler
 checks that the static image and largest individual frame fit configured RAM,
 but recursion depth remains a program responsibility.
 

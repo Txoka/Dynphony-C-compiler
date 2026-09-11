@@ -8,7 +8,7 @@ in test_compiler.py; these tests protect the boundaries between compiler stages.
 import unittest
 from pathlib import Path
 
-from dynphony import Target, compile_source
+from dynphony import Target, compile_source, compile_sources
 from dynphony.emulator import Machine, native_available, native_run
 
 
@@ -65,6 +65,24 @@ int main(void) {
 
 
 class CompilerIntegrationTests(unittest.TestCase):
+    def test_multiple_translation_units_and_internal_linkage(self):
+        sources = [
+            (
+                "main.c",
+                "extern int shared; int add(int,int); "
+                "static int local(void){return 6;} "
+                "int main(void){return add(shared,local());}",
+            ),
+            (
+                "math.c",
+                "int shared=5; static int local(void){return 99;} "
+                "int add(int a,int b){return a+b+(local()==99?0:1000);}",
+            ),
+        ]
+        result = compile_sources(sources)
+        machine = Machine(result.image.binary)
+        self.assertEqual(machine.run(result.image.symbols["_halt"]), 11)
+
     @unittest.skipUnless(native_available(), "native emulator is not built")
     def test_native_emulator_matches_python_reference(self):
         source = """int main(void) {

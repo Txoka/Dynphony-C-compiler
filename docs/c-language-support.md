@@ -109,7 +109,7 @@ an empty parameter list means no parameters. Falling out of `main` returns zero.
 | Arrays | Flexible array members, VLA `sizeof`, and inner variable bounds such as `int matrix[3][columns]` |
 | Control flow | `switch`/`case`/`default`, `goto`, and labels used by `goto` |
 | Functions | Variadic functions, old-style definitions, and aggregate calling conventions |
-| Runtime library | Standard headers and library functions, including bundled `malloc`, `free`, `memcpy`, and `memset` |
+| Hosted runtime | Standard headers, file I/O, locale, and the rest of a hosted C library |
 | Character support | Wide and Unicode character/string literal types |
 | Low-level extensions | Inline assembly and compiler-specific attribute syntax |
 
@@ -127,20 +127,27 @@ pointer decay. The compiler also supports using a pointer as dynamic storage
 once application code obtains that pointer; `examples/arena_allocator.c` shows
 an aligned bump allocator built entirely in the supported subset.
 
-Two related facilities remain absent or incomplete:
+One related facility remains incomplete:
 
 - VLAs with an inner runtime bound, such as `int table[rows][columns]`, need
   runtime stride metadata for pointer arithmetic. The current implementation
   supports the common outer-bound form (`int table[rows][3]`) and keeps that
   metadata-free design for now.
-- `malloc`/`free` need a chosen heap region, allocation policy, failure rule,
-  and a stable runtime API. There is no operating system to supply those. A
-  bundled reference runtime can provide this without changing the C frontend;
-  `malloc` can then back ordinary pointer-based dynamic arrays such as
-  `char *text = malloc(count)`.
+
+The compiler supplies header-free `malloc`, `free`, `calloc`, `realloc`,
+`memcpy`, `memmove`, `memset`, and `memcmp`. Their size/count parameters are
+`unsigned int`, the target's 32-bit size type. The heap begins after all static
+and reserved data, grows upward, and is checked against the live descending
+stack whenever it grows. Allocations are 4-byte aligned. The allocator uses a
+first-fit free list with block splitting and adjacent-block coalescing. Zero-size
+allocation returns null; allocation failure and `calloc` multiplication overflow
+also return null. As in C, invalid frees, double frees, and overlapping `memcpy`
+arguments have undefined behavior; use `memmove` for overlap.
 
 Generated code does not trap null dereferences, out-of-bounds accesses, invalid
-shifts, division by zero, stack overflow, or heap/stack collision. The compiler
+shifts, division by zero, or stack overflow. Heap growth detects the current
+stack boundary, but a later unusually deep call can still collide with an
+existing allocation. The compiler
 checks that the static image and largest individual frame fit configured RAM,
 but recursion depth remains a program responsibility.
 
@@ -209,11 +216,10 @@ calls `screen_cursor`.
   base with `counter` and rebases static pointer initializers.
 - A JSON symbol/map output and an inspectable optimized IR dump.
 - A reference emulator for generated instruction bytes.
-- Software 32-bit multiply, signed/unsigned divide, and remainder helpers, linked
-  into the image only when reachable.
+- Software arithmetic and memory/allocation helpers, linked into the image only
+  when reachable.
 - Infinite self-jump termination with the value returned by `main` retained in
   `r1`.
 
-The arena allocator example demonstrates allocation in the supported subset,
-but it is application source rather than a built-in C feature. A reference-on-
-demand memory and `malloc`/`free` runtime is tracked in the optimization roadmap.
+The arena allocator example demonstrates a specialized application-owned bump
+allocator; the bundled free-list allocator covers ordinary dynamic allocation.

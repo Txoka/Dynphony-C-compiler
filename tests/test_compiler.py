@@ -152,6 +152,89 @@ class ExecutionTests(unittest.TestCase):
         run('int main(void){char s[6]="Hi"; return s[0]+s[1]+s[2]+s[5];}', 177)
         run("int main(void){int a=0; return sizeof(a++)+a;}", 4)
 
+    def test_memory_runtime(self):
+        result, _ = run(
+            """int main(void) {
+                unsigned char source[8] = {1,2,3,4,5,6,7,8};
+                unsigned char destination[8] = {0};
+                if (memcpy(destination, source, 8) != destination) return 1;
+                memmove(destination + 2, destination, 6);
+                memset(source, 9, 4);
+                return destination[0] * 1000 + destination[1] * 100
+                    + destination[2] * 10 + destination[7]
+                    + (memcmp(source, source, 8) != 0);
+            }""",
+            1216,
+        )
+        self.assertNotIn("malloc", result.image.symbols)
+
+    def test_heap_allocation_reuse_coalescing_and_alignment(self):
+        source = """int main(void) {
+            unsigned char *a = malloc(16), *b = malloc(16), *c = malloc(16), *d;
+            if (!a || !b || !c) return 1;
+            free(b); free(a);
+            d = malloc(36);
+            if (d != a) return 2;
+            free(c); free(d);
+            d = malloc(64);
+            if (d != a) return 3;
+            return (unsigned int)d & 3u;
+        }"""
+        for pic, address in ((False, 0), (False, 0x1003), (True, 0x1203)):
+            with self.subTest(pic=pic, address=address):
+                run(source, 0, pic, address, ram=1 << 14)
+
+    def test_calloc_realloc_and_heap_exhaustion(self):
+        run(
+            """int main(void) {
+                int *values = calloc(3, sizeof(int));
+                int *grown;
+                if (!values || values[0] || values[1] || values[2]) return 1;
+                values[1] = 42;
+                grown = realloc(values, 6 * sizeof(int));
+                if (!grown) return 2;
+                return grown[0] + grown[1] + grown[2];
+            }""",
+            42,
+            ram=1 << 14,
+        )
+        run(
+            "int main(void){return malloc(input()) == 0;}",
+            1,
+            ram=1 << 13,
+            inputs=(7000,),
+        )
+        run(
+            "int main(void){return calloc(0xffffffffu, 2) == 0;}",
+            1,
+            ram=1 << 13,
+        )
+        run(
+            "int main(void){return malloc(0xfffffffcu) == 0;}",
+            1,
+            ram=1 << 13,
+        )
+
+    def test_heap_starts_after_text_framebuffer(self):
+        for include in (False, True):
+            with self.subTest(include_framebuffer=include):
+                result, _ = run(
+                    """int main(void) {
+                        unsigned char *framebuffer =
+                            (unsigned char *)screen_framebuffer();
+                        unsigned char *allocation = malloc(4);
+                        return allocation != 0
+                            && allocation >= framebuffer + 3840
+                            && (((unsigned int)allocation & 3u) == 0);
+                    }""",
+                    1,
+                    include_framebuffer=include,
+                )
+                self.assertGreater(
+                    result.image.symbols["__dyn_heap_anchor"],
+                    result.image.symbols["__dyn_printf_framebuffer"],
+                )
+
     def test_bool_type_and_char_arrays(self):
         run("bool global_flag = 9; int main(void) { return global_flag; }", 1)
         run(

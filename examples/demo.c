@@ -9,5 +9,7 @@ int factorial(int n) {
 int main(void) {
     int sum = 0;
     for (int i = 0; i < 4; i++) sum += start[i];
-    return factorial(5) + sum; /* 146 */
+    int res = factorial(5) + sum;
+    printf("Result: %d", res);
+    return res; /* 146 */
 }

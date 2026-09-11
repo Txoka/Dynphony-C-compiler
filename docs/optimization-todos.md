@@ -244,15 +244,15 @@ memory behavior.
 
 ## Runtime library and dynamic memory
 
-- [ ] Ship `memcpy`, `memmove`, `memset`, and `memcmp` as ordinary runtime C
+- [x] Ship `memcpy`, `memmove`, `memset`, and `memcmp` as ordinary runtime C
   functions and include each one only when referenced.
-- [ ] Define the heap between the aligned end of static data and the descending
+- [x] Define the heap between the aligned end of static data and the descending
   stack, using configured RAM size rather than a hard-coded address.
-- [ ] Provide `malloc`, `free`, `calloc`, and `realloc` through a compact aligned
+- [x] Provide `malloc`, `free`, `calloc`, and `realloc` through a compact aligned
   free-list allocator with block splitting and adjacent-block coalescing.
-- [ ] Detect allocation failure and heap/stack collision without requiring a
+- [x] Detect allocation failure and heap/stack collision without requiring a
   memory-management construct in the C language.
-- [ ] Retain the arena allocator as an optional specialized allocator and example,
+- [x] Retain the arena allocator as an optional specialized allocator and example,
   rather than requiring programs to paste it in for ordinary allocation.
 
 ## Optional loop unrolling

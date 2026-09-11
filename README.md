@@ -60,7 +60,8 @@ are documented in [docs/c-language-support.md](docs/c-language-support.md).
 - Fixed-size and multidimensional arrays, inferred outer array bounds, brace/string initializers, array indexing/decay, pointer scaling/difference, dereference, and address-of.
 - Zero-filled globals, partially initialized arrays, integer constant initializers, and symbolic pointer initializers such as `int *p = &a[2]`.
 - Software multiplication and signed/unsigned division/remainder. Division is bounded to 32 iterations, including for large unsigned divisors.
-- Header-free built-in functions for Dynphony I/O, time, and persistent memory.
+- Header-free built-in functions for dynamic memory, bytewise memory operations,
+  Dynphony I/O, time, and persistent memory.
 
 Entry must be `int main(void)` or `int main()`. In this version, an empty parameter list is treated as exactly zero parameters. Falling off `main` returns zero. Other non-void functions also get a deterministic zero fallthrough, although callers must not rely on this for portable C.
 
@@ -132,7 +133,8 @@ reserved and cannot be used for user-defined functions.
 
 This is a C subset compiler, not a conforming full C implementation. Unsupported constructs produce diagnostics where encountered:
 
-- No preprocessor (`#include`, `#define`, etc.), headers, standard library, heap, or separate linking.
+- No preprocessor (`#include`, `#define`, etc.), headers, hosted standard library,
+  or separate linking. A compact freestanding memory runtime is bundled.
 - No 64-bit `long long`, floating point, unions, bit-fields, or variadic functions.
 - No `volatile` or `restrict`, local `extern`, designated initializers, `switch`, `goto`, or inline assembly. VLAs support an outermost runtime bound; VLA `sizeof` and inner runtime bounds remain incomplete.
 - No aggregate arguments/returns or old-style function definitions.
@@ -212,11 +214,14 @@ the halt jump; no multiplication helper or standalone `main` remains.
 sole-called `foo(int)`. Function relocation exposes its argument and locals to
 the global fixed point, producing the identical 8-byte result.
 
-`examples/arena_allocator.c` supplies bytewise memory set/copy functions and an
-aligned bump allocator built from `struct Arena`. It demonstrates structures,
-`const` pointers, `sizeof`, `void *` conversions, and allocation without an
-operating system. A bundled, reference-on-demand `malloc`/memory runtime remains
-on the roadmap; applications currently have to include their allocator source.
+`examples/arena_allocator.c` remains an example of a specialized bump allocator.
+Ordinary programs can instead call the bundled `malloc`/`free` and `mem*`
+functions directly without headers.
+
+`examples/dynamic_sensor_report.c` is a complete input-driven example using the
+new runtime. It grows a heap-backed sample vector, sorts with VLA workspace,
+deduplicates overlapping storage, builds a heap-backed histogram and statistical
+report, emits the results, and releases every allocation.
 
 The API exposes each pipeline stage:
 

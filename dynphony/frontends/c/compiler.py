@@ -64,6 +64,20 @@ class CFrontend:
                     Global(Symbol("__dyn_printf_column", UINT, "global", "__dyn_printf_column"), bytearray(4)),
                 ]
             )
+        # A zero-filled sentinel after every other static reservation gives the
+        # allocator a stable, aligned heap origin in fixed and PIC images.
+        typed.globals.append(
+            Global(
+                Symbol(
+                    "__dyn_heap_anchor",
+                    array(CHAR, 7),
+                    "global",
+                    "__dyn_heap_anchor",
+                ),
+                bytearray(),
+                reserved=7,
+            )
+        )
         return FrontendResult(parsed, typed, lower(typed))
 
 

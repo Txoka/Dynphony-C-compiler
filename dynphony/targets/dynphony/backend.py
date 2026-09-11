@@ -198,6 +198,8 @@ class Backend:
                             argument_registers[0], argument_registers[1]
                         )
                     )
+                elif name == "__dyn_heap_remaining":
+                    return False
                 else:
                     return False
                 for value in instruction.args:
@@ -346,6 +348,25 @@ class Backend:
                 a.emit(isa.persistent_store(2, 1))
             else:
                 a.emit(isa.persistent_store(immediate, 1, True))
+        elif name == "__dyn_heap_remaining":
+            self.get(args[0], 1)
+            mask = self.target.ram_size - 1
+            if mask <= 0xFFFF:
+                a.emit(isa.alu("and", 1, 1, mask, True))
+                a.emit(isa.alu("and", 2, 14, mask, True))
+            else:
+                a.emit(isa.cheap_constant(7, mask))
+                a.emit(isa.alu("and", 1, 1, 7))
+                a.emit(isa.alu("and", 2, 14, 7))
+            unavailable = self.unique()
+            done = self.unique()
+            a.emit(isa.alu("cmp", 15, 2, 1))
+            a.branch("jb", unavailable)
+            a.emit(isa.alu("sub", 1, 2, 1))
+            a.branch("jmp", done)
+            a.label(unavailable)
+            a.emit(isa.mov(1, 0))
+            a.label(done)
         else:
             raise AssertionError(f"unknown intrinsic {name}")
 

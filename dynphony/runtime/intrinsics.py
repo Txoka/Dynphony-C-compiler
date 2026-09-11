@@ -10,6 +10,7 @@ unsigned int time_low(void);
 unsigned int time_high(void);
 unsigned int persistent_load(unsigned int address);
 void persistent_store(unsigned int address, unsigned int value);
+unsigned int __dyn_heap_remaining(void *address);
 """
 
 # Included only when the source contains a direct call to printf or one of the
@@ -109,6 +110,7 @@ NAMES = frozenset(
         "time_high",
         "persistent_load",
         "persistent_store",
+        "__dyn_heap_remaining",
     }
 )
 

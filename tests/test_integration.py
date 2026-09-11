@@ -6,9 +6,13 @@ in test_compiler.py; these tests protect the boundaries between compiler stages.
 """
 
 import unittest
+from pathlib import Path
 
 from dynphony import Target, compile_source
 from dynphony.emulator import Machine
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def compile_and_run(source, expected, *, target=None, load_address=0, inputs=()):
@@ -61,6 +65,44 @@ int main(void) {
 
 
 class CompilerIntegrationTests(unittest.TestCase):
+    def test_insertion_sort_demo(self):
+        source = (ROOT / "examples/insertion_sort.c").read_text()
+        values = [12, 240, 7, 7, 99, 0, 180, 42, 3, 1, 8, 255, 25, 6, 2, 11]
+        _, machine = compile_and_run(source, 0, inputs=values)
+        self.assertEqual(machine.outputs, sorted(values))
+
+    def test_dynamic_sensor_report_demo(self):
+        source = (ROOT / "examples/dynamic_sensor_report.c").read_text()
+        samples = [12, -3, 7, 12, 25, 7, 0, -3, 18]
+        result, machine = compile_and_run(
+            source,
+            6,
+            inputs=[len(samples), *samples],
+        )
+        self.assertEqual(
+            machine.outputs,
+            [
+                9,
+                6,
+                0,
+                0xFFFFFFFD,
+                25,
+                12,
+                9,
+                1,
+                0,
+                1,
+                1,
+                0,
+                1,
+                0,
+                1,
+                1,
+                0,
+            ],
+        )
+        self.assertIn("__dyn_heap_anchor", result.image.symbols)
+
     def test_mixed_language_features_at_fixed_and_pic_addresses(self):
         # values sum to 23; all are odd, so collect gives 28; finish adds 7 + 1.
         compile_and_run(MIXED_FEATURE_PROGRAM, 36)
@@ -98,4 +140,3 @@ class CompilerIntegrationTests(unittest.TestCase):
                     self.assertLess(framebuffer, len(result.image.binary))
                 else:
                     self.assertGreaterEqual(framebuffer, len(result.image.binary))
-

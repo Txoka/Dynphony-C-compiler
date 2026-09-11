@@ -377,6 +377,63 @@ class Frontend:
         result = INT if op in ("==", "!=", "<", "<=", ">", ">=") else t
         return self.node(source, "binary", result, [a, b], op)
 
+    def printf(self, source):
+        args = source.args.exprs if source.args else []
+        if not args or not isinstance(args[0], c.Constant) or args[0].type != "string":
+            self.fail(source, "printf format must be a string literal")
+        data = string_bytes(args[0].value)[:-1]
+        tokens = []
+        literal_start = 0
+        argument = 1
+        index = 0
+
+        def flush(end):
+            nonlocal literal_start
+            if end > literal_start:
+                tokens.append(("literal", literal_start, end - literal_start))
+            literal_start = end
+
+        while index < len(data):
+            if data[index] != ord("%"):
+                index += 1
+                continue
+            flush(index)
+            if index + 1 == len(data):
+                self.fail(source, "incomplete printf conversion")
+            conversion = chr(data[index + 1])
+            if conversion == "%":
+                tokens.append(("literal", index, 1))
+            elif conversion in "ducxs":
+                if argument == len(args):
+                    self.fail(source, "printf has too few arguments")
+                value = self.value(self.expr(args[argument]))
+                argument += 1
+                if conversion == "s":
+                    if value.type.kind != "pointer" or value.type.base.unqualified() != CHAR:
+                        self.fail(source, "printf %s requires a char pointer")
+                else:
+                    if not value.type.integer:
+                        self.fail(source, f"printf %{conversion} requires an integer")
+                    value = self.cast(
+                        value, INT if conversion == "d" else UINT
+                    )
+                tokens.append((conversion, value))
+            else:
+                self.fail(source, f"unsupported printf conversion %{conversion}")
+            index += 2
+            literal_start = index
+        flush(len(data))
+        if argument != len(args):
+            self.fail(source, "printf has too many arguments")
+        return self.node(
+            source,
+            "printf",
+            INT,
+            [self.value(self.expr(args[0]))]
+            + [token[1] for token in tokens if token[0] != "literal"],
+            tokens,
+        )
+
     def expr(self, s):
         if isinstance(s, c.Constant):
             if s.type == "string":
@@ -508,6 +565,8 @@ class Frontend:
                 return self.node(s, "compound_assign", a.type, [a, b], s.op[:-1])
             return self.node(s, "assign", a.type, [a, b])
         if isinstance(s, c.FuncCall):
+            if isinstance(s.name, c.ID) and s.name.name == "printf":
+                return self.printf(s)
             fn = self.value(self.expr(s.name))
             if fn.type.kind != "pointer" or fn.type.base.kind != "function":
                 self.fail(s, "call requires a function")

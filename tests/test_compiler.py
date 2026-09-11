@@ -192,6 +192,35 @@ class ExecutionTests(unittest.TestCase):
             inputs=(1,),
         )
 
+    def test_printf_text_framebuffer(self):
+        source = """int main(void) {
+            int x = 42;
+            printf("%d\\n", x);
+            printf("x = %d\\n", x);
+            printf("%s\\n", "hello");
+            printf("%c\\n", 'A');
+            return 0;
+        }"""
+        result, machine = run(source, 0)
+        framebuffer = result.image.symbols["__dyn_printf_framebuffer"]
+        self.assertEqual(machine.screen_updates, [(0, 0), (1, framebuffer)])
+        self.assertEqual(bytes(machine.memory[framebuffer : framebuffer + 2]), b"42")
+        self.assertEqual(bytes(machine.memory[framebuffer + 96 : framebuffer + 102]), b"x = 42")
+        self.assertEqual(bytes(machine.memory[framebuffer + 192 : framebuffer + 197]), b"hello")
+        self.assertEqual(machine.memory[framebuffer + 288], ord("A"))
+
+        result, machine = run(
+            """int main(void) {
+                char *fb = screen_framebuffer();
+                screen_cursor(5, 2);
+                printf("%c", 'Z');
+                return fb[2 * 96 + 5];
+            }""",
+            90,
+        )
+        self.assertIn("__dyn_printf_framebuffer", result.image.symbols)
+        self.assertEqual(machine.memory[result.image.symbols["__dyn_printf_framebuffer"] + 197], 90)
+
     def test_big_endian_and_unaligned(self):
         run(
             "int main(void){int x=0x12345678; unsigned char *p=(unsigned char*)&x; return p[0]*256+p[3];}",

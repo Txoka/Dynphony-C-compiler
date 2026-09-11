@@ -53,6 +53,8 @@ are documented in [docs/c-language-support.md](docs/c-language-support.md).
 - Decimal/octal/hex integer literals, character literals, ordinary single-byte strings, and comments.
 - Arithmetic `+ - * / %`, bitwise operations, shifts, comparisons, logical operators, prefix/postfix increment/decrement, assignment and compound assignment.
 - Short-circuit `&&`/`||`, conditional `?:`, comma expressions, and unevaluated `sizeof`.
+- Conditional 96×40 ASCII text-screen support through literal-format `printf`,
+  `screen_framebuffer`, and `screen_cursor`.
 - `if`/`else`, `while`, `for`, `do`/`while`, `break`, `continue`.
 - Functions, direct/indirect calls, recursion, and returns. The first six scalar arguments use registers; later scalar arguments are passed on the stack.
 - Fixed-size and multidimensional arrays, inferred outer array bounds, brace/string initializers, array indexing/decay, pointer scaling/difference, dereference, and address-of.

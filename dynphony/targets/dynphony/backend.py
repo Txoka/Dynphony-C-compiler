@@ -688,6 +688,12 @@ class Backend:
             elif op == "stack_restore":
                 self.get(i.args[0], 14)
                 continue
+            elif op == "init_text_screen":
+                a.emit(isa.screen(0, 0, True))
+                a.emit(isa.constant(2, 1))
+                self.get(i.args[0], 1)
+                a.emit(isa.screen(2, 1))
+                continue
             elif op in ("cast", "copy"):
                 self.get(i.args[0], 1)
                 if op == "cast":

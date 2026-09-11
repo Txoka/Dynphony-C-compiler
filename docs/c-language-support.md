@@ -163,6 +163,10 @@ unsigned int time_high(void);
 
 unsigned int persistent_load(unsigned int address);
 void persistent_store(unsigned int address, unsigned int value);
+
+int printf(const char *format, ...);
+char *screen_framebuffer(void);
+void screen_cursor(unsigned int x, unsigned int y);
 ```
 
 | Built-in | Meaning |
@@ -176,10 +180,20 @@ void persistent_store(unsigned int address, unsigned int value);
 | `time_high()` | Read the high 32 bits of time |
 | `persistent_load(address)` | Load a value from persistent storage |
 | `persistent_store(address, value)` | Store a value in persistent storage |
+| `printf(format, ...)` | Text output to a compiler-provided 96×40 ASCII framebuffer; format must be a literal and supports `%%`, `%c`, `%d`, `%u`, `%x`, and `%s` |
+| `screen_framebuffer()` | Return the writable ASCII framebuffer as `char *` |
+| `screen_cursor(x, y)` | Set the next `printf` cell; coordinates are clamped to the framebuffer |
 
 These names are reserved and cannot be redefined by a program. The reference
 emulator records `output` values and screen updates, accepts queued input and
 keyboard values, and models configurable persistent storage.
+
+The text framebuffer is included only when a direct call to `printf`,
+`screen_framebuffer`, or `screen_cursor` appears in the source. Startup selects
+ASCII 8 mode and points the screen at the framebuffer while leaving color and
+font settings unchanged. Newlines advance to the next 96-character row. Output
+past row 40 is discarded; scrolling can be implemented by application code that
+rewrites the buffer and calls `screen_cursor`.
 
 ## Other target facilities
 

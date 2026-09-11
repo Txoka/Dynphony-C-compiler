@@ -5,7 +5,7 @@ are ordinary values. The backend never sees parser nodes or C expression trees.
 """
 
 from dataclasses import dataclass, field
-from .model import INT, UINT, VOID, Type, pointer, common
+from .model import CHAR, INT, UINT, VOID, Type, pointer, common
 
 
 @dataclass
@@ -224,6 +224,37 @@ class Lowerer:
                     target.children[0].value.key,
                 )
             return self.emit("call", [self.expr(target), *arguments], n.type)
+        if op == "printf":
+            format_ = self.expr(n.children[0])
+            arguments = iter(n.children[1:])
+            result = self.const(0, INT)
+            for token in n.value:
+                if token[0] == "literal":
+                    _, offset, count = token
+                    text = (
+                        self.binary("+", format_, self.const(offset, UINT), UINT)
+                        if offset
+                        else format_
+                    )
+                    written = self.emit(
+                        "direct_call",
+                        (text, self.const(count, UINT)),
+                        UINT,
+                        "__dyn_printf_write",
+                    )
+                else:
+                    helper = {
+                        "d": "__dyn_printf_signed",
+                        "u": "__dyn_printf_unsigned",
+                        "x": "__dyn_printf_hex",
+                        "c": "__dyn_printf_put",
+                        "s": "__dyn_printf_string",
+                    }[token[0]]
+                    written = self.emit(
+                        "direct_call", (self.expr(next(arguments)),), UINT, helper
+                    )
+                result = self.binary("+", result, written, INT)
+            return result
         if op == "comma":
             for child in n.children:
                 result = self.expr(child)
@@ -375,6 +406,15 @@ def lower(program):
             Instruction("relocate_globals"),
         ]
     )
+    if any(g.symbol.key == "__dyn_printf_framebuffer" for g in program.globals):
+        address = startup.values
+        startup.values += 1
+        startup.instructions.append(
+            Instruction("global_addr", address, (), pointer(CHAR), "__dyn_printf_framebuffer")
+        )
+        startup.instructions.append(
+            Instruction("init_text_screen", args=(address,))
+        )
     result = startup.values
     startup.values += 1
     startup.instructions.append(

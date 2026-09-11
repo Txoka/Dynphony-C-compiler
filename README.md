@@ -26,6 +26,17 @@ python -m dynphony examples/pi.c -o pi.bin --run \
 The meter's Hz value is decoded Dynphony instructions executed per real second,
 not a simulated hardware clock frequency.
 
+Build and select the optional native C emulator with:
+
+```sh
+make native
+python -m dynphony examples/pi.c -o pi.bin --run --hz-meter --engine native
+```
+
+`--engine auto` is the default and prefers the native extension when installed;
+`--engine python` always selects the portable reference emulator. Build local
+wheels with `make wheel`, an sdist with `make sdist`, or both with `make dist`.
+
 Generate a position-independent image and execute it at another address:
 
 ```sh

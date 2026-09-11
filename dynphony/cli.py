@@ -8,7 +8,7 @@ from pathlib import Path
 from .compiler import compile_source
 from .targets.dynphony import Target
 from .middle.model import CompileError
-from .emulator import Machine, signed
+from .emulator import Machine, native_available, native_run, signed
 
 
 def number(s):
@@ -43,6 +43,12 @@ def main(argv=None):
         "--hz-meter",
         action="store_true",
         help="show live emulator throughput in instructions per second",
+    )
+    p.add_argument(
+        "--engine",
+        choices=("auto", "native", "python"),
+        default="auto",
+        help="emulator engine (default: native when installed, otherwise python)",
     )
     args = p.parse_args(argv)
     try:
@@ -79,6 +85,17 @@ def main(argv=None):
                 persistent_size=args.persistent_size,
             )
             halt = result.image.symbols["_halt"] + (address if args.pic else 0)
+            if args.engine == "native" and not native_available():
+                raise CompileError(
+                    "native emulator is unavailable; run 'make native' or use "
+                    "--engine python"
+                )
+            engine = (
+                "native"
+                if args.engine == "native"
+                or (args.engine == "auto" and native_available())
+                else "python"
+            )
             started = time.perf_counter()
             meter_width = 0
             meter_steps = -1
@@ -102,17 +119,27 @@ def main(argv=None):
                 meter_width = max(meter_width, len(message))
 
             try:
-                value = m.run(
-                    halt,
-                    args.max_steps,
-                    progress=show_meter if args.hz_meter else None,
-                )
+                runner = native_run if engine == "native" else m.run
+                if engine == "native":
+                    value = runner(
+                        m,
+                        halt,
+                        args.max_steps,
+                        progress=show_meter if args.hz_meter else None,
+                    )
+                else:
+                    value = runner(
+                        halt,
+                        args.max_steps,
+                        progress=show_meter if args.hz_meter else None,
+                    )
             finally:
                 if args.hz_meter:
                     show_meter(m)
                     print(flush=True)
             print(
-                f"main returned {signed(value)} (r1=0x{value:08x}); {m.steps} instructions"
+                f"main returned {signed(value)} (r1=0x{value:08x}); "
+                f"{m.steps} instructions; {engine} engine"
             )
         return 0
     except (CompileError, OSError, RuntimeError, ValueError) as exc:

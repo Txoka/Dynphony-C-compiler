@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 from dynphony import Target, compile_source
-from dynphony.emulator import Machine
+from dynphony.emulator import Machine, native_available, native_run
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,6 +65,49 @@ int main(void) {
 
 
 class CompilerIntegrationTests(unittest.TestCase):
+    @unittest.skipUnless(native_available(), "native emulator is not built")
+    def test_native_emulator_matches_python_reference(self):
+        source = """int main(void) {
+            unsigned int value = input();
+            unsigned int key = keyboard();
+            int values[3] = {1, 2, 3};
+            values[1] = value;
+            output(values[0] + values[1] + values[2]);
+            screen(7, key);
+            persistent_store(4, value ^ key);
+            return persistent_load(4) ^ time_high();
+        }"""
+        target = Target(ram_size=1 << 16, persistent_size=256, pic=True)
+        result = compile_source(source, "native-integration.c", target)
+        address = 0x1203
+        halt = address + result.image.symbols["_halt"]
+        options = {
+            "inputs": [38],
+            "keyboard_inputs": [9],
+            "time_value": 0x1234567800000000,
+            "persistent_size": 256,
+        }
+        reference = Machine(result.image.binary, target.ram_size, address, **options)
+        native = Machine(result.image.binary, target.ram_size, address, **options)
+        expected = reference.run(halt)
+        actual = native_run(native, halt)
+        self.assertEqual(actual, expected)
+        for attribute in (
+            "pc",
+            "steps",
+            "regs",
+            "comparison",
+            "outputs",
+            "screen_updates",
+            "memory",
+            "persistent",
+        ):
+            self.assertEqual(
+                getattr(native, attribute),
+                getattr(reference, attribute),
+                attribute,
+            )
+
     def test_insertion_sort_demo(self):
         source = (ROOT / "examples/insertion_sort.c").read_text()
         values = [12, 240, 7, 7, 99, 0, 180, 42, 3, 1, 8, 255, 25, 6, 2, 11]

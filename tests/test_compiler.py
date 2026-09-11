@@ -265,6 +265,75 @@ class ExecutionTests(unittest.TestCase):
             with self.subTest(pic=pic, address=address):
                 run(source, 230, pic, address)
 
+    def test_dead_globals_and_their_relocation_targets_are_removed(self):
+        baseline = compile_source("int main(void){return 6;}")
+        result = compile_source(
+            "int unused_values[4]={3,5,7,11}; "
+            "int dead(int x){return x+99;} "
+            "int (*unused_function)(int)=dead; "
+            "int main(void){return 6;}"
+        )
+        self.assertEqual(result.image.binary, baseline.image.binary)
+        self.assertEqual(set(result.image.symbols), {"_start", "_halt"})
+        self.assertNotIn("dead", result.ir.dump())
+        self.assertEqual(result.ir.globals, [])
+
+    def test_live_global_relocations_retain_targets_transitively(self):
+        source = (
+            "int value=40; int *middle=&value; int **root=&middle; "
+            "int dead=99; int *dead_pointer=&dead; "
+            "int main(void){output((unsigned int)&root);return **root+2;}"
+        )
+        result, _ = run(source, 42)
+        self.assertEqual(
+            {global_.symbol.key for global_ in result.ir.globals},
+            {"value", "middle", "root"},
+        )
+        self.assertNotIn("dead", result.image.symbols)
+        self.assertNotIn("dead_pointer", result.image.symbols)
+
+    def test_dead_last_relocation_removes_pic_startup_fixup(self):
+        result = compile_source(
+            "int dead=1; int *unused=&dead; int main(void){return 7;}",
+            target=Target(pic=True),
+        )
+        self.assertNotIn("relocate_globals", result.ir.dump())
+        self.assertEqual(result.ir.globals, [])
+        machine = Machine(result.image.binary, 256, 0x40)
+        self.assertEqual(machine.run(0x40 + result.image.symbols["_halt"]), 7)
+
+    def test_immutable_scalar_array_and_pointer_loads_fold(self):
+        cases = [
+            ("int value=42; int main(void){return value;}", 42),
+            ("int values[3]={10,20,30}; int main(void){return values[1];}", 20),
+            (
+                "int value=40; int *pointer=&value; "
+                "int main(void){return *pointer+2;}",
+                42,
+            ),
+            ("signed char value=255; int main(void){return value;}", -1),
+        ]
+        for source, expected in cases:
+            with self.subTest(source=source):
+                result, _ = run(source, expected)
+                self.assertEqual(result.ir.globals, [])
+                self.assertEqual(set(result.image.symbols), {"_start", "_halt"})
+
+    def test_written_or_escaped_globals_are_not_folded(self):
+        result, _ = run(
+            "int value=4; int main(void){value=input();return value;}",
+            17,
+            inputs=[17],
+        )
+        self.assertIn("value", result.image.symbols)
+        self.assertIn(" load ", result.ir.dump())
+        result, _ = run(
+            "int values[2]={4,5}; int main(void){int i=input();values[i]=9;return values[0];}",
+            9,
+            inputs=[0],
+        )
+        self.assertIn("values", result.image.symbols)
+
     def test_pic_binary_identical_and_reentry(self):
         source = "int x=13; int *p=&x; int main(void){return *p;}"
         a = compile_source(source, target=Target(pic=True))
@@ -597,7 +666,8 @@ class EncodingTests(unittest.TestCase):
 
     def test_readonly_parameters_stay_in_input_registers(self):
         result = compile_source(
-            "int add(int a,int b){return a+b;} int (*keep)(int,int)=add; int main(void){return add(20,22);}"
+            "int add(int a,int b){return a+b;} int (*keep)(int,int)=add; "
+            "int main(void){return input()?keep(20,22):add(20,22);}"
         )
         address = result.image.symbols["add"]
         self.assertIn("direct_call", result.ir.dump())
@@ -612,7 +682,7 @@ class EncodingTests(unittest.TestCase):
     def test_address_taken_parameter_uses_safe_stack_path(self):
         result = compile_source(
             "int f(int a){int *p=&a; *p+=1; return a;} "
-            "int (*keep)(int)=f; int main(void){return f(41);}"
+            "int (*keep)(int)=f; int main(void){return input()?keep(41):f(41);}"
         )
         self.assertGreater(result.image.frames["f"], 4)
         machine = Machine(result.image.binary, 2048)

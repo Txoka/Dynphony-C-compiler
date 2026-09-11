@@ -26,6 +26,10 @@ Completed foundations:
 - [x] Convert safe direct self-tail recursion into parallel parameter updates and a loop backedge.
 - [x] Apply the expanded no-growth identity set, including self-comparisons and division or
   remainder by one.
+- [x] Remove unreachable globals together with dead initializer-relocation chains and
+  functions referenced only by dead function-pointer data.
+- [x] Fold typed big-endian loads from proven immutable scalar and array globals, including
+  zero-addend symbolic pointer initializers, and rerun the global fixed point.
 
 The next milestone is one global fixed point containing only Tier 1 transformations:
 surviving function bodies are never duplicated, and a transformation is kept
@@ -35,34 +39,26 @@ one-shot phases.
 
 Remaining work, in dependency and payoff order:
 
-1. [ ] Add whole-program dead-global elimination to the global fixed point. Roots
-   are globals referenced by reachable code and externally required runtime data;
-   initializer relocations recursively retain their target globals and functions.
-   Removing the last pointer relocation must also remove unnecessary PIC relocation
-   work. This is small, no-growth, and immediately removes unused static bytes.
-2. [ ] Classify globals as immutable when reachable code cannot write them directly
-   or through an escaping alias. Fold loads from immutable scalar and array data,
-   including symbolic pointer initializers. This provides the memory facts needed
-   to evaluate constant table loops without treating arbitrary loads as pure.
-3. [ ] Add a bounded IR evaluator for side-effect-free calls and loops with known
+1. [ ] Add a bounded IR evaluator for side-effect-free calls and loops with known
    inputs. Give it explicit instruction, recursion-depth, and memory limits; reject
    device operations, volatile access, unknown calls, undefined operations, and
-   writes outside private evaluator state. Feed successful results back into the
-   ordinary fixed point. Together with priorities 1-2, this should collapse the
+   writes outside private evaluator state. Model immutable global bytes and private
+   local storage in the evaluator, then feed successful results back into the
+   ordinary fixed point. Together with the completed global passes, this should collapse the
    constant demo to `mov r1, 146` plus halt.
-4. [ ] Identify natural loops, induction variables, and proven constant trip counts.
+2. [ ] Identify natural loops, induction variables, and proven constant trip counts.
    Use these facts for loop-invariant code motion and bounded evaluation first;
    retain code-growing unrolling behind its explicit option.
-5. [ ] Recognize matching quotient/remainder expressions with identical proven-pure
+3. [ ] Recognize matching quotient/remainder expressions with identical proven-pure
    operands and lower them to a two-result `divmod` IR operation. Preserve signed
    C semantics and reject intervening mutation, volatile access, and calls.
-6. [ ] Add local value numbering, then global value numbering, using conservative
+4. [ ] Add local value numbering, then global value numbering, using conservative
    alias invalidation for loads. This removes repeated arithmetic and address work.
-7. [ ] Add block liveness and interference-based register/stack-slot reuse, followed
+5. [ ] Add block liveness and interference-based register/stack-slot reuse, followed
    by loop-depth spill costs and better caller-saved allocation.
-8. [ ] Add the small post-allocation peephole pass and iterate it with branch/call
+6. [ ] Add the small post-allocation peephole pass and iterate it with branch/call
    relaxation. It should only remove artifacts requiring physical-register knowledge.
-9. [ ] Add non-tail recursive fallthrough-call layout for a recursive function
+7. [ ] Add non-tail recursive fallthrough-call layout for a recursive function
    with exactly one external direct caller. Split the caller around that site,
    pre-push its known continuation, place the recursive function next, and let
    the first entry fall through while recursive entries keep calling the stable
@@ -76,9 +72,12 @@ Remaining work, in dependency and payoff order:
    arguments, nested non-tail recursion, caller continuation execution, `sp`
    restoration, stable recursive entry labels, branch-distance thresholds, and
    a deliberately unprofitable layout that must remain unchanged.
-10. [ ] Add flag liveness and profile/cost-guided block ordering after the preceding
+8. [ ] Add flag liveness and profile/cost-guided block ordering after the preceding
     CFG and register foundations are stable.
-11. [ ] Implement the memory-runtime work (`mem*`, heap, and allocation) independently
+9. [ ] Extend singleton function-pointer recognition through immutable global loads.
+   Local single-target pointers already reduce to direct calls after copy propagation.
+   Keep guarded multi-target devirtualization deferred because it can grow code.
+10. [ ] Implement the memory-runtime work (`mem*`, heap, and allocation) independently
     of optimizer correctness; retain collision checks as an opt-in target policy.
 
 ## Deferred and optional work
@@ -91,8 +90,8 @@ Remaining work, in dependency and payoff order:
   opposite direction and return `NULL` from `malloc` on collision. Decide the
   public target option and failure-hook policy before implementation; do not
   silently add checks to ordinary release output.
-- [ ] Defer function-pointer devirtualization. Continue using conservative
-  address-taken reachability for now.
+- [ ] Defer guarded multi-target function-pointer devirtualization. Continue using
+  conservative address-taken reachability when a singleton target cannot be proven.
 - [ ] Defer PIC startup self-relocation. If implemented later, place it behind an
   explicit non-default option and benchmark it against the current `r13`
   base-relative sequences. Dynphony branches are absolute, not PC-relative, so
@@ -157,12 +156,16 @@ Remaining work, in dependency and payoff order:
 
 ## Whole-program globals and compile-time evaluation
 
-- [ ] Remove unreferenced globals from the module before binary layout.
-- [ ] Follow global-initializer relocations transitively, so a live pointer keeps
+- [x] Remove unreferenced globals from the module before binary layout.
+- [x] Follow global-initializer relocations transitively, so a live pointer keeps
   its target alive while an unreachable pointer and target can both disappear.
-- [ ] Recompute PIC startup relocation work after global deletion.
-- [ ] Prove immutable globals using stores, pointer escapes, calls, and aliases.
-- [ ] Fold typed big-endian loads from proven-immutable initialized data.
+- [x] Recompute PIC startup relocation work after global deletion.
+- [x] Prove immutable globals conservatively using direct stores and address escapes.
+- [x] Fold typed big-endian scalar and array loads from proven-immutable initialized data.
+- [ ] Fold symbolic pointer initializers with nonzero addends; zero-addend pointers
+  already become ordinary `global_addr` values and compound through the fixed point.
+- [ ] Refine interprocedural alias summaries so passing an address to a known,
+  non-writing callee does not unnecessarily disqualify immutable data.
 - [ ] Evaluate bounded side-effect-free loops and calls with known arguments.
 - [ ] Re-run SCCP, call-graph reachability, and dead-global elimination after each
   successful compile-time evaluation.

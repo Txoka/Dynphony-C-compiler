@@ -1131,35 +1131,239 @@ def _runtime_helper(instruction, constants):
     )
 
 
-def remove_unreachable_functions(module):
-    """Keep functions whose address is reachable from the startup IR root."""
-    before = tuple(function.name for function in module.functions)
-    functions = {function.name: function for function in module.functions}
-    pending = ["_start"]
-    for global_ in module.globals:
-        pending.extend(symbol for _, symbol, _ in global_.relocations)
+def remove_unreachable_symbols(module):
+    """Prune closed-world functions and data unreachable from the startup IR.
 
-    reachable = set()
-    while pending:
-        name = pending.pop()
-        if name in reachable or name not in functions:
-            continue
-        reachable.add(name)
-        function = functions[name]
-        constants = _constant_definitions(function)
-        for instruction in function.instructions:
-            if instruction.op in ("direct_call", "direct_tailcall"):
-                pending.append(instruction.extra)
-            if instruction.op == "global_addr" and instruction.extra in functions:
-                pending.append(instruction.extra)
-            helper = _runtime_helper(instruction, constants)
-            if helper:
-                pending.append(helper)
+    A live instruction retains each symbol whose address it materializes.  A live
+    global in turn retains the symbols named by its initializer relocations.  The
+    combined traversal is important: a function pointer in dead data must not keep
+    either the data or its target function in the image.
+    """
+    before_functions = tuple(function.name for function in module.functions)
+    before_globals = tuple(global_.symbol.key for global_ in module.globals)
+    functions = {function.name: function for function in module.functions}
+    globals_ = {global_.symbol.key: global_ for global_ in module.globals}
+    pending_functions = ["_start"]
+    pending_globals = []
+
+    reachable_functions = set()
+    reachable_globals = set()
+    while pending_functions or pending_globals:
+        while pending_functions:
+            name = pending_functions.pop()
+            if name in reachable_functions or name not in functions:
+                continue
+            reachable_functions.add(name)
+            function = functions[name]
+            constants = _constant_definitions(function)
+            for instruction in function.instructions:
+                if instruction.op in ("direct_call", "direct_tailcall"):
+                    pending_functions.append(instruction.extra)
+                if instruction.op == "global_addr":
+                    if instruction.extra in functions:
+                        pending_functions.append(instruction.extra)
+                    elif instruction.extra in globals_:
+                        pending_globals.append(instruction.extra)
+                helper = _runtime_helper(instruction, constants)
+                if helper:
+                    pending_functions.append(helper)
+
+        while pending_globals:
+            name = pending_globals.pop()
+            if name in reachable_globals or name not in globals_:
+                continue
+            reachable_globals.add(name)
+            for _, target, _ in globals_[name].relocations:
+                if target in functions:
+                    pending_functions.append(target)
+                elif target in globals_:
+                    pending_globals.append(target)
 
     module.functions = [
-        function for function in module.functions if function.name in reachable
+        function
+        for function in module.functions
+        if function.name in reachable_functions
     ]
-    return tuple(function.name for function in module.functions) != before
+    module.globals = [
+        global_
+        for global_ in module.globals
+        if global_.symbol.key in reachable_globals
+    ]
+
+    # Relocation setup has observable cost but no work once the last live
+    # initializer relocation disappears.
+    if not any(global_.relocations for global_ in module.globals):
+        entry = next(
+            (function for function in module.functions if function.name == "_start"),
+            None,
+        )
+        if entry is not None:
+            entry.instructions = [
+                instruction
+                for instruction in entry.instructions
+                if instruction.op != "relocate_globals"
+            ]
+
+    return (
+        tuple(function.name for function in module.functions) != before_functions
+        or tuple(global_.symbol.key for global_ in module.globals) != before_globals
+    )
+
+
+def remove_unreachable_functions(module):
+    """Compatibility name for the combined whole-program reachability pass."""
+    return remove_unreachable_symbols(module)
+
+
+def fold_immutable_global_loads(module):
+    """Fold loads from initialized globals whose addresses cannot be mutated.
+
+    This deliberately uses a closed-world, escape-sensitive proof.  Directly
+    derived addresses may participate in address arithmetic and loads.  Passing
+    one to an opaque operation, returning it, or storing it as a runtime value
+    makes the corresponding object ineligible.
+    """
+    globals_ = {global_.symbol.key: global_ for global_ in module.globals}
+    unsafe = set()
+
+    def facts(function):
+        immutable_values = {
+            value
+            for value, definitions in _definitions(function).items()
+            if len(definitions) == 1
+        }
+        constants = {}
+        addresses = {}
+        origins = {}
+        for instruction in function.instructions:
+            if instruction.op == "global_addr" and instruction.extra in globals_:
+                origins[instruction.dst] = {instruction.extra}
+            elif instruction.op in ("copy", "cast", "binary"):
+                inherited = set().union(
+                    *(origins.get(argument, set()) for argument in instruction.args)
+                )
+                if inherited:
+                    origins[instruction.dst] = inherited
+
+            if instruction.dst not in immutable_values:
+                continue
+            if instruction.op == "const":
+                constants[instruction.dst] = instruction.extra
+            elif instruction.op == "global_addr" and instruction.extra in globals_:
+                addresses[instruction.dst] = (instruction.extra, 0)
+            elif instruction.op in ("copy", "cast") and instruction.args:
+                if instruction.args[0] in addresses:
+                    addresses[instruction.dst] = addresses[instruction.args[0]]
+            elif instruction.op == "binary" and instruction.extra in ("+", "-"):
+                left, right = instruction.args
+                if left in addresses and right in constants:
+                    symbol, offset = addresses[left]
+                    delta = constants[right]
+                    addresses[instruction.dst] = (
+                        symbol,
+                        offset + (delta if instruction.extra == "+" else -delta),
+                    )
+                elif (
+                    instruction.extra == "+"
+                    and right in addresses
+                    and left in constants
+                ):
+                    symbol, offset = addresses[right]
+                    addresses[instruction.dst] = (symbol, offset + constants[left])
+            elif instruction.op == "load" and instruction.args:
+                address = addresses.get(instruction.args[0])
+                if address is not None:
+                    global_ = globals_[address[0]]
+                    relocation = next(
+                        (
+                            (target, addend)
+                            for offset, target, addend in global_.relocations
+                            if offset == address[1]
+                        ),
+                        None,
+                    )
+                    if relocation is not None and instruction.type.kind == "pointer":
+                        target, addend = relocation
+                        if addend == 0 and target in globals_:
+                            addresses[instruction.dst] = (target, 0)
+                            origins[instruction.dst] = {target}
+
+        return constants, addresses, origins
+
+    function_facts = []
+    for function in module.functions:
+        constants, addresses, origins = facts(function)
+        function_facts.append((function, constants, addresses))
+        for instruction in function.instructions:
+            argument_origins = set().union(
+                *(
+                    origins.get(arg, set())
+                    for arg in instruction.args
+                )
+            )
+            if not argument_origins:
+                continue
+            if instruction.op == "store":
+                unsafe.update(origins.get(instruction.args[0], set()))
+                if len(instruction.args) > 1:
+                    unsafe.update(origins.get(instruction.args[1], set()))
+            elif instruction.op not in ("load", "binary", "copy", "cast"):
+                unsafe.update(argument_origins)
+
+    changed = False
+    for function, _, addresses in function_facts:
+        rewritten = []
+        for instruction in function.instructions:
+            replacement = None
+            if instruction.op == "load" and instruction.args[0] in addresses:
+                symbol, offset = addresses[instruction.args[0]]
+                global_ = globals_[symbol]
+                if symbol not in unsafe:
+                    relocation = next(
+                        (
+                            (target, addend)
+                            for at, target, addend in global_.relocations
+                            if at == offset
+                        ),
+                        None,
+                    )
+                    if (
+                        relocation is not None
+                        and instruction.type.kind == "pointer"
+                        and relocation[1] == 0
+                    ):
+                        replacement = Instruction(
+                            "global_addr",
+                            instruction.dst,
+                            (),
+                            instruction.type,
+                            relocation[0],
+                        )
+                    elif (
+                        relocation is None
+                        and instruction.type.integer
+                        and 0 <= offset
+                        and offset + instruction.type.size <= len(global_.data)
+                    ):
+                        raw = int.from_bytes(
+                            global_.data[offset : offset + instruction.type.size],
+                            "big",
+                            signed=False,
+                        )
+                        if instruction.type.signed:
+                            sign = 1 << (instruction.type.size * 8 - 1)
+                            raw = (raw ^ sign) - sign
+                        replacement = Instruction(
+                            "const",
+                            instruction.dst,
+                            (),
+                            instruction.type,
+                            raw,
+                        )
+            rewritten.append(replacement or instruction)
+            changed |= replacement is not None
+        function.instructions = rewritten
+    return changed
 
 
 def remove_unused_stack_initialization(module):
@@ -1209,7 +1413,7 @@ def _optimize_functions(functions):
 
 def optimize(module):
     def state(current):
-        return tuple(
+        functions = tuple(
             (
                 function.name,
                 function.values,
@@ -1220,6 +1424,16 @@ def optimize(module):
             )
             for function in current.functions
         )
+        globals_ = tuple(
+            (
+                global_.symbol.key,
+                bytes(global_.data),
+                tuple(global_.relocations),
+                global_.reserved,
+            )
+            for global_ in current.globals
+        )
+        return functions, globals_
 
     def local_passes(current):
         _optimize_functions(current.functions)
@@ -1233,6 +1447,7 @@ def optimize(module):
             simplify_control_flow(function)
             remove_dead_values(function)
         remove_unreachable_functions(current)
+        fold_immutable_global_loads(current)
         remove_unused_stack_initialization(current)
 
     return FixedPointPassManager(

@@ -6,6 +6,11 @@ these helpers deterministically return 0.
 """
 
 SOURCE = r"""
+unsigned int __dyn_checked_mul(unsigned int a, unsigned int b) {
+    if (a && b > 0xffffffffu / a) return 0;
+    return a * b;
+}
+
 void *memcpy(void *destination, const void *source, unsigned int count) {
     unsigned char *to = destination;
     const unsigned char *from = source;
@@ -62,7 +67,7 @@ struct __dyn_heap_block {
 };
 
 extern unsigned char __dyn_heap_anchor[7];
-static unsigned char *__dyn_heap_end;
+unsigned char *__dyn_heap_end;
 static struct __dyn_heap_block *__dyn_heap_free_list;
 
 void *__dyn_heap_take_free(unsigned int size) {

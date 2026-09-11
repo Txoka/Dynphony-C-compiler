@@ -1,4 +1,4 @@
-from .compiler import Compiler, Compilation, compile_source
+from .compiler import Compiler, Compilation, compile_source, compile_sources
 from .targets.dynphony import Target, Image
 from .middle.model import CompileError
 
@@ -9,6 +9,5 @@ __all__ = [
     "Image",
     "Target",
     "compile_source",
+    "compile_sources",
 ]
-
-__all__ = ["compile_source", "Compilation", "Target", "Image", "CompileError"]

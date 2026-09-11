@@ -21,6 +21,7 @@ class Backend:
         self.a = Assembler(target)
         self.frames = {}
         self.private_id = 0
+        self.needs_stack_overflow = False
 
     def unique(self):
         self.private_id += 1
@@ -704,8 +705,39 @@ class Backend:
                 a.emit(isa.mov(1, 14))
             elif op == "stack_alloc":
                 self.get(i.args[0], 1)
-                a.emit(isa.alu("sub", 14, 14, 1))
-                a.emit(isa.mov(1, 14))
+                self.needs_stack_overflow = True
+                if self.target.ram_size < 2**32:
+                    a.emit(isa.cheap_constant(7, self.target.ram_size))
+                    a.emit(isa.alu("cmp", 15, 1, 7))
+                    a.branch("jae", "_stack_overflow")
+                a.emit(isa.alu("sub", 2, 14, 1))
+                mask = self.target.ram_size - 1
+                if mask <= 0xFFFF:
+                    a.emit(isa.alu("and", 2, 2, mask, True))
+                else:
+                    a.emit(isa.cheap_constant(7, mask))
+                    a.emit(isa.alu("and", 2, 2, 7))
+                heap = next(
+                    (g.symbol.key for g in self.module.globals
+                     if g.symbol.name == "__dyn_heap_end"),
+                    None,
+                )
+                if heap is not None:
+                    a.address(7, heap)
+                    a.emit(isa.load(4, 3, 7))
+                    have_heap = self.unique()
+                    a.emit(isa.alu("cmp", 15, 3, 0))
+                    a.branch("jne", have_heap)
+                a.address(3, "__dyn_heap_anchor", 7)
+                a.emit(isa.alu("add", 3, 3, 3, True))
+                a.emit(isa.cheap_constant(7, -4))
+                a.emit(isa.alu("and", 3, 3, 7))
+                if heap is not None:
+                    a.label(have_heap)
+                a.emit(isa.alu("cmp", 15, 2, 3))
+                a.branch("jb", "_stack_overflow")
+                a.emit(isa.mov(14, 2))
+                a.emit(isa.mov(1, 2))
             elif op == "stack_restore":
                 self.get(i.args[0], 14)
                 continue
@@ -947,6 +979,9 @@ class Backend:
         a = self.a
         for f in self.module.functions:
             self.function(f)
+        if self.needs_stack_overflow:
+            a.label("_stack_overflow")
+            a.branch("jmp", "_stack_overflow")
         for g in self.module.globals:
             if g.reserved and not self.target.include_framebuffer:
                 continue

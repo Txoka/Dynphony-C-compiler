@@ -13,6 +13,20 @@ void persistent_store(unsigned int address, unsigned int value);
 unsigned int __dyn_heap_remaining(void *address);
 """
 
+LIBRARY_PROTOTYPES = r"""
+void *memcpy(void *destination, const void *source, unsigned int count);
+void *memmove(void *destination, const void *source, unsigned int count);
+void *memset(void *destination, int value, unsigned int count);
+int memcmp(const void *left, const void *right, unsigned int count);
+void *malloc(unsigned int size);
+void free(void *pointer);
+void *calloc(unsigned int count, unsigned int size);
+void *realloc(void *pointer, unsigned int size);
+int printf(char *format);
+char *screen_framebuffer(void);
+void screen_cursor(unsigned int x, unsigned int y);
+"""
+
 # Included only when the source contains a direct call to printf or one of the
 # text-screen helpers. ASCII 8 mode maps one byte to each of 96 * 40 cells.
 SCREEN_SOURCE = r"""

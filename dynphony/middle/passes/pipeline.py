@@ -1157,6 +1157,12 @@ def remove_unreachable_symbols(module):
             function = functions[name]
             constants = _constant_definitions(function)
             for instruction in function.instructions:
+                if instruction.op == "stack_alloc":
+                    pending_globals.extend(
+                        global_.symbol.key
+                        for global_ in module.globals
+                        if global_.symbol.name == "__dyn_heap_anchor"
+                    )
                 if instruction.op in ("direct_call", "direct_tailcall"):
                     pending_functions.append(instruction.extra)
                 if instruction.op == "global_addr":

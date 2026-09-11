@@ -5,7 +5,7 @@ are ordinary values. The backend never sees parser nodes or C expression trees.
 """
 
 from dataclasses import dataclass, field
-from .model import CHAR, INT, UINT, VOID, Type, pointer, common
+from .model import CHAR, INT, UINT, VOID, Node, Type, pointer, common
 
 
 @dataclass
@@ -115,8 +115,12 @@ class Lowerer:
         return self.emit("binary", (a, b), t, op)
 
     def scaled(self, a, b, scale):
-        if scale != 1:
-            b = self.binary("*", b, self.const(scale), INT)
+        if isinstance(scale, Node):
+            scale_value = self.expr(scale)
+            b = self.binary("*", b, scale_value, INT)
+        elif scale != 1:
+            scale_value = self.const(scale)
+            b = self.binary("*", b, scale_value, INT)
         return self.binary("+", a, b, UINT)
 
     def expr(self, n):
@@ -141,7 +145,8 @@ class Lowerer:
             d = self.binary(
                 "-", self.expr(n.children[0]), self.expr(n.children[1]), INT
             )
-            return self.binary("/", d, self.const(n.value), INT)
+            scale = self.expr(n.value) if isinstance(n.value, Node) else self.const(n.value)
+            return self.binary("/", d, scale, INT)
         if op == "binary":
             if n.value in ("&&", "||"):
                 result = self.value()
@@ -165,6 +170,13 @@ class Lowerer:
                 self.expr(n.children[0]),
                 self.expr(n.children[1]),
                 n.children[0].type,
+            )
+        if op == "checked_mul":
+            return self.emit(
+                "direct_call",
+                (self.expr(n.children[0]), self.expr(n.children[1])),
+                UINT,
+                "__dyn_checked_mul",
             )
         if op == "assign":
             addr = self.address(n.children[0])
@@ -197,18 +209,22 @@ class Lowerer:
             return value
         if op == "increment":
             lhs = n.children[0]
+            operator, step = n.value
             addr = self.address(lhs)
             old = self.emit("load", (addr,), lhs.type)
-            step = lhs.type.base.size if lhs.type.kind == "pointer" else 1
+            if isinstance(step, Node):
+                step = self.expr(step)
+            else:
+                step = self.const(step)
             value = self.binary(
-                "+" if "+" in n.value else "-",
+                "+" if "+" in operator else "-",
                 old,
-                self.const(step),
+                step,
                 lhs.type.promote(),
             )
             value = self.cast(value, lhs.type)
             self.store(addr, value, lhs.type)
-            return old if n.value.startswith("p") else value
+            return old if operator.startswith("p") else value
         if op == "call":
             target = n.children[0]
             arguments = [self.expr(x) for x in n.children[1:]]
@@ -278,7 +294,7 @@ class Lowerer:
         op = n.op
         if op == "block":
             dynamic = any(
-                child.op == "declare" and child.value[0].type.kind == "vla"
+                child.op == "declare" and child.value[3] is not None
                 for child in n.children
             )
             marker = self.emit("stack_mark", type_=UINT) if dynamic else None
@@ -290,15 +306,18 @@ class Lowerer:
                 self.emit("stack_restore", (marker,), result=False)
         elif op == "expression":
             self.expr(n.children[0])
+        elif op == "vla_bounds":
+            for saved, expression in n.value:
+                address = self.emit("local_addr", type_=pointer(UINT), extra=saved.key)
+                self.store(address, self.expr(expression), UINT)
         elif op == "declare":
-            sym, entries, bound = n.value
-            if sym.type.kind == "vla":
-                bytes_ = self.expr(bound)
-                if sym.type.base.size != 1:
-                    bytes_ = self.binary(
-                        "*", bytes_, self.const(sym.type.base.size, UINT), UINT
-                    )
-                align = sym.type.base.align
+            sym, entries, bounds, size = n.value
+            for saved, expression in bounds:
+                address = self.emit("local_addr", type_=pointer(UINT), extra=saved.key)
+                self.store(address, self.expr(expression), UINT)
+            if size is not None:
+                bytes_ = self.expr(size)
+                align = sym.type.align
                 if align > 1:
                     bytes_ = self.binary(
                         "+", bytes_, self.const(align - 1, UINT), UINT
@@ -307,7 +326,7 @@ class Lowerer:
                         "&", bytes_, self.const(-(align), UINT), UINT
                     )
                 self.dynamic_locals[sym.key] = self.emit(
-                    "stack_alloc", (bytes_,), pointer(sym.type.base)
+                    "stack_alloc", (bytes_,), pointer(sym.type)
                 )
                 return
             if entries is not None:
@@ -318,12 +337,13 @@ class Lowerer:
                     p = self.binary("+", addr, self.const(off), UINT) if off else addr
                     self.store(p, self.expr(value), t)
         elif op == "return":
+            result = self.expr(n.children[0]) if n.children else None
             for marker in reversed(self.scopes):
                 if marker is not None:
                     self.emit("stack_restore", (marker,), result=False)
             self.emit(
                 "return",
-                (self.expr(n.children[0]),) if n.children else (),
+                (result,) if result is not None else (),
                 result=False,
             )
         elif op == "if":
@@ -343,7 +363,7 @@ class Lowerer:
                 self.label(),
             )
             loop_marker = None
-            if op == "for" and n.children[0].op == "declare" and n.children[0].value[0].type.kind == "vla":
+            if op == "for" and n.children[0].op == "declare" and n.children[0].value[3] is not None:
                 loop_marker = self.emit("stack_mark", type_=UINT)
                 self.scopes.append(loop_marker)
             if op == "for":

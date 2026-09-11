@@ -5,7 +5,7 @@ import json
 import sys
 import time
 from pathlib import Path
-from .compiler import compile_source
+from .compiler import compile_sources
 from .targets.dynphony import Target
 from .middle.model import CompileError
 from .emulator import Machine, native_available, native_run, signed
@@ -19,8 +19,16 @@ def main(argv=None):
     p = argparse.ArgumentParser(
         prog="dyncc", description="Compile a C subset to a Dynphony raw binary"
     )
-    p.add_argument("source", type=Path)
+    p.add_argument("source", type=Path, nargs="+")
     p.add_argument("-o", "--output", type=Path, default=Path("a.bin"))
+    p.add_argument(
+        "-I", dest="include_dirs", action="append", type=Path, default=[],
+        help="add a header search directory",
+    )
+    p.add_argument(
+        "-D", dest="defines", action="append", default=[], metavar="NAME[=VALUE]",
+        help="define a preprocessor macro",
+    )
     p.add_argument("--pic", action="store_true")
     p.add_argument("--load-address", type=number, default=0)
     p.add_argument("--ram-size", type=number, default=16 * 1024 * 1024)
@@ -59,7 +67,13 @@ def main(argv=None):
             args.pic,
             args.include_framebuffer,
         )
-        result = compile_source(args.source.read_text(), str(args.source), target)
+        sources = [(str(path), path.read_text()) for path in args.source]
+        result = compile_sources(
+            sources,
+            target,
+            include_dirs=args.include_dirs,
+            defines=args.defines,
+        )
         if (
             args.run_address is not None
             and not args.pic

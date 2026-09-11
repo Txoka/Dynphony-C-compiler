@@ -27,6 +27,7 @@ class Type:
     params: tuple
     record: Record | None
     qualifiers: frozenset[str]
+    bound: Any = field(default=None, compare=False)
 
     def __init__(
         self,
@@ -38,6 +39,7 @@ class Type:
         params=(),
         record=None,
         qualifiers=(),
+        bound=None,
     ):
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "width", size)
@@ -47,6 +49,7 @@ class Type:
         object.__setattr__(self, "params", tuple(params))
         object.__setattr__(self, "record", record)
         object.__setattr__(self, "qualifiers", frozenset(qualifiers))
+        object.__setattr__(self, "bound", bound)
 
     @property
     def size(self):
@@ -84,6 +87,7 @@ class Type:
             self.params,
             self.record,
             self.qualifiers | set(names),
+            self.bound,
         )
 
     def unqualified(self):
@@ -95,6 +99,7 @@ class Type:
             self.count,
             self.params,
             self.record,
+            bound=self.bound,
         )
 
     def __str__(self):
@@ -131,9 +136,9 @@ def array(base, count):
     return Type("array", base.size * count, False, base, count)
 
 
-def vla(base):
-    """A runtime-sized array whose element size is fixed at compile time."""
-    return Type("vla", 0, False, base)
+def vla(base, bound=None):
+    """A runtime-sized array; ``bound`` is a saved declaration-time value."""
+    return Type("vla", 0, False, base, bound=bound)
 
 
 def common(a, b):
@@ -182,6 +187,7 @@ class Function:
 class Program:
     globals: list[Global]
     functions: list[Function]
+    symbols: dict[str, Symbol] = field(default_factory=dict)
 
 
 def align_up(value, alignment):

@@ -102,7 +102,7 @@ def string_bytes(text):
 
 
 class Frontend:
-    def __init__(self):
+    def __init__(self, namespace=""):
         self.scopes = [{}]
         self.typedefs = [{}]
         self.records = [{}]
@@ -113,6 +113,10 @@ class Frontend:
         self.serial = 0
         self.loop_depth = 0
         self.return_type = VOID
+        self.namespace = namespace
+
+    def internal_key(self, name):
+        return f"__tu_{self.namespace}_{name}" if self.namespace else name
 
     def fail(self, source, message):
         raise CompileError(f'{getattr(source, "coord", "")}: {message}')
@@ -184,18 +188,13 @@ class Frontend:
             return self.apply_qualifiers(t, pointer(self.typename(t.type)), t.quals)
         if isinstance(t, c.ArrayDecl):
             base = self.typename(t.type)
-            if base.size == 0:
+            if base.size == 0 and not self.variably_modified(base):
                 self.fail(t, "invalid array type")
             if t.dim is None:
                 return array(base, 0)
             try:
                 count = self.const_int(t.dim)
             except CompileError:
-                # A VLA is valid only when each element has a fixed stride.
-                # This deliberately defers inner runtime dimensions, whose
-                # pointer arithmetic needs runtime stride metadata.
-                if base.kind == "vla":
-                    self.fail(t, "only the outermost array bound may be variable")
                 return vla(base)
             if count < 0:
                 self.fail(t, "invalid array type")
@@ -308,6 +307,60 @@ class Frontend:
             return Node("address", n.type.decay(), [n], location=n.location)
         return n
 
+    @staticmethod
+    def variably_modified(t):
+        if t.kind == "vla":
+            return True
+        return t.base is not None and Frontend.variably_modified(t.base)
+
+    @staticmethod
+    def compatible_type(a, b):
+        if a == b:
+            return True
+        if a.kind in ("array", "vla") and b.kind in ("array", "vla"):
+            if a.kind == b.kind == "array" and a.count != b.count:
+                return False
+            return Frontend.compatible_type(a.base, b.base)
+        return False
+
+    def bind_vla_bounds(self, declarator, t):
+        """Attach saved declaration-time bounds to a variably modified type."""
+        if isinstance(declarator, (c.Decl, c.Typename, c.Typedef, c.TypeDecl)):
+            return self.bind_vla_bounds(declarator.type, t)
+        if isinstance(declarator, c.PtrDecl):
+            base, bounds = self.bind_vla_bounds(declarator.type, t.base)
+            return pointer(base), bounds
+        if isinstance(declarator, c.ArrayDecl):
+            base, bounds = self.bind_vla_bounds(declarator.type, t.base)
+            if t.kind == "vla":
+                expression = self.scalar(declarator.dim, self.expr(declarator.dim))
+                if not expression.type.integer:
+                    self.fail(declarator.dim, "variable array bound requires an integer")
+                saved = self.new("__vla_bound", UINT, "local")
+                self.locals.append(saved)
+                reference = self.node(declarator.dim, "var", UINT, value=saved, lvalue=True)
+                return vla(base, reference), [*bounds, (saved, self.cast(expression, UINT))]
+            return array(base, t.count), bounds
+        return t, []
+
+    def runtime_size(self, source, t):
+        if t.kind == "vla":
+            if t.bound is None:
+                self.fail(source, "variable array bound is unavailable in this context")
+            element = self.runtime_size(source, t.base)
+            return self.node(source, "checked_mul", UINT, [self.value(t.bound), element])
+        if t.kind == "array" and self.variably_modified(t.base):
+            element = self.runtime_size(source, t.base)
+            return self.node(
+                source,
+                "checked_mul",
+                UINT,
+                [self.node(source, "const", UINT, value=t.count), element],
+            )
+        if not t.size:
+            self.fail(source, "sizeof requires a complete object type")
+        return self.node(source, "const", UINT, value=t.size)
+
     def scalar(self, source, n):
         n = self.value(n)
         if not n.type.integer and n.type.kind != "pointer":
@@ -329,7 +382,9 @@ class Frontend:
                 return self.cast(n, t)
             if (
                 n.type.kind == "pointer"
-                and n.type.base.unqualified() == t.base.unqualified()
+                and self.compatible_type(
+                    n.type.base.unqualified(), t.base.unqualified()
+                )
                 and n.type.base.qualifiers <= t.base.qualifiers
             ):
                 return self.cast(n, t)
@@ -350,18 +405,34 @@ class Frontend:
         if op == "+" and b.type.kind == "pointer" and a.type.integer:
             a, b = b, a
         if op in ("+", "-") and a.type.kind == "pointer":
-            if not a.type.base.size:
+            if not a.type.base.size and not self.variably_modified(a.type.base):
                 self.fail(source, "arithmetic on incomplete/function pointer")
             if b.type.integer:
+                scale = (
+                    self.runtime_size(source, a.type.base)
+                    if self.variably_modified(a.type.base)
+                    else a.type.base.size
+                )
+                if op == "-":
+                    scale = (
+                        self.node(source, "unary", UINT, [scale], "-")
+                        if isinstance(scale, Node)
+                        else -scale
+                    )
                 return self.node(
                     source,
                     "pointer_add",
                     a.type,
                     [a, self.cast(b, INT)],
-                    a.type.base.size * (1 if op == "+" else -1),
+                    scale,
                 )
             if op == "-" and b.type == a.type:
-                return self.node(source, "pointer_diff", INT, [a, b], a.type.base.size)
+                scale = (
+                    self.runtime_size(source, a.type.base)
+                    if self.variably_modified(a.type.base)
+                    else a.type.base.size
+                )
+                return self.node(source, "pointer_diff", INT, [a, b], scale)
         if op in ("==", "!=", "<", "<=", ">", ">=") and (
             a.type.kind == "pointer" or b.type.kind == "pointer"
         ):
@@ -441,6 +512,7 @@ class Frontend:
                 sym = self.new(
                     f"__string_{self.serial}", array(CHAR, len(data)), "global"
                 )
+                sym.key = self.internal_key(sym.key)
                 self.globals.append(Global(sym, bytearray(data)))
                 return self.node(s, "var", sym.type, value=sym, lvalue=True)
             if s.type == "char":
@@ -511,9 +583,7 @@ class Frontend:
                     if isinstance(s.expr, c.Typename)
                     else self.expr(s.expr).type
                 )
-                if not t.size:
-                    self.fail(s, "sizeof requires a complete object type")
-                return self.node(s, "const", UINT, value=t.size)
+                return self.runtime_size(s, t)
             a = self.expr(s.expr)
             if s.op == "&":
                 if not a.lvalue and a.type.kind != "function":
@@ -529,9 +599,18 @@ class Frontend:
             if s.op in ("++", "--", "p++", "p--"):
                 self.modifiable(s, a)
                 self.scalar(s, a)
-                if a.type.kind == "pointer" and not a.type.base.size:
+                if (
+                    a.type.kind == "pointer"
+                    and not a.type.base.size
+                    and not self.variably_modified(a.type.base)
+                ):
                     self.fail(s, "invalid pointer increment")
-                return self.node(s, "increment", a.type, [a], s.op)
+                step = (
+                    self.runtime_size(s, a.type.base)
+                    if a.type.kind == "pointer" and self.variably_modified(a.type.base)
+                    else a.type.base.size if a.type.kind == "pointer" else 1
+                )
+                return self.node(s, "increment", a.type, [a], (s.op, step))
             a = self.scalar(s, a)
             if s.op == "!":
                 return self.node(s, "unary", INT, [a], "!")
@@ -706,8 +785,10 @@ class Frontend:
         if isinstance(s, c.Typedef):
             if s.name in self.typedefs[-1]:
                 self.fail(s, "duplicate typedef")
-            self.typedefs[-1][s.name] = self.typename(s)
-            return self.node(s, "block")
+            t = self.typename(s)
+            t, bounds = self.bind_vla_bounds(s, t) if self.variably_modified(t) else (t, [])
+            self.typedefs[-1][s.name] = t
+            return self.node(s, "vla_bounds", value=bounds) if bounds else self.node(s, "block")
         if isinstance(s, c.Decl):
             if not s.name:
                 self.typename(s)
@@ -718,14 +799,19 @@ class Frontend:
                     "unsupported local storage specifier",
                 )
             t = self.resolve_array(s, self.typename(s))
-            if t.kind in ("void", "function") or (not t.size and t.kind != "vla"):
+            t, vla_bounds = self.bind_vla_bounds(s, t) if self.variably_modified(t) else (t, [])
+            dynamic_object = t.kind in ("array", "vla") and self.variably_modified(t)
+            if t.kind in ("void", "function") or (not t.size and not dynamic_object and t.kind != "pointer"):
                 self.fail(s, "local variable requires a complete object type")
             if s.name in self.scopes[-1]:
                 self.fail(s, "duplicate local declaration")
             if "static" in s.storage:
                 self.serial += 1
                 sym = Symbol(
-                    s.name, t, "global", f"__static_{self.serial}_{s.name}"
+                    s.name,
+                    t,
+                    "global",
+                    self.internal_key(f"__static_{self.serial}_{s.name}"),
                 )
                 global_ = Global(sym, bytearray(t.size))
                 self.globals.append(global_)
@@ -735,11 +821,11 @@ class Frontend:
             sym = self.new(s.name, t, "local")
             self.scopes[-1][s.name] = sym
             self.locals.append(sym)
-            if t.kind == "vla" and s.init is not None:
+            if dynamic_object and s.init is not None:
                 self.fail(s, "variable-length arrays cannot have initializers")
             entries = self.initializer(s, t, s.init) if s.init else None
-            bound = self.vla_bound(s) if t.kind == "vla" else None
-            return self.node(s, "declare", value=(sym, entries, bound))
+            size = self.runtime_size(s, t) if dynamic_object else None
+            return self.node(s, "declare", value=(sym, entries, vla_bounds, size))
         if isinstance(s, c.Return):
             if self.return_type == VOID:
                 if s.expr:
@@ -886,7 +972,7 @@ class Frontend:
                 return self.normalize_constant(operations[n.value](), n.type)
         raise CompileError(f"{n.location}: unsupported static constant initializer")
 
-    def build(self, tree):
+    def build(self, tree, require_main=True):
         definitions = {}
         for item in tree.ext:
             if isinstance(item, c.Typedef):
@@ -910,6 +996,8 @@ class Frontend:
             if old and old.type != t:
                 self.fail(d, "conflicting declaration")
             sym = old or self.new(d.name, t, storage)
+            if old is None and "static" in d.storage:
+                sym.key = self.internal_key(d.name)
             self.scopes[0][d.name] = sym
             if isinstance(item, c.FuncDef):
                 if d.name in definitions:
@@ -938,11 +1026,17 @@ class Frontend:
             self.enum_tags.append({})
             params = []
             declarations = item.decl.type.args.params if item.decl.type.args else []
+            parameter_bounds = []
             for d, t in zip(declarations, sym.type.params):
                 if not d.name:
                     self.fail(d, "definition parameters need names")
                 if d.name in self.scopes[-1]:
                     self.fail(d, "duplicate parameter")
+                raw = self.typename(d)
+                if self.variably_modified(raw):
+                    raw, bounds = self.bind_vla_bounds(d, raw)
+                    parameter_bounds.extend(bounds)
+                    t = raw.decay()
                 p = self.new(d.name, t, "parameter")
                 params.append(p)
                 self.scopes[-1][d.name] = p
@@ -950,7 +1044,10 @@ class Frontend:
             body = self.node(
                 item.body,
                 "block",
-                children=[self.statement(x) for x in item.body.block_items or []],
+                children=(
+                    [self.node(item.body, "vla_bounds", value=parameter_bounds)]
+                    if parameter_bounds else []
+                ) + [self.statement(x) for x in item.body.block_items or []],
             )
             self.functions.append(Function(sym, params, self.locals, body))
             self.enum_tags.pop()
@@ -958,12 +1055,17 @@ class Frontend:
             self.typedefs.pop()
             self.scopes.pop()
         main = self.scopes[0].get("main")
-        if not main or "main" not in definitions:
-            raise CompileError("a definition of main is required")
-        if main.type.params or main.type.base != INT:
-            raise CompileError("entry point must be int main(void)")
-        return Program(self.globals, self.functions)
+        if require_main:
+            if not main or "main" not in definitions:
+                raise CompileError("a definition of main is required")
+            if main.type.params or main.type.base != INT:
+                raise CompileError("entry point must be int main(void)")
+        return Program(
+            self.globals,
+            self.functions,
+            {symbol.key: symbol for symbol in self.scopes[0].values()},
+        )
 
 
-def typecheck(tree):
-    return Frontend().build(tree)
+def typecheck(tree, require_main=True, namespace=""):
+    return Frontend(namespace).build(tree, require_main=require_main)

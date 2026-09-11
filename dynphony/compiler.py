@@ -23,6 +23,14 @@ class Compiler:
 
     def compile(self, source: str, filename: str = "<input>") -> Compilation:
         frontend = self.frontend.lower(source, filename)
+        return self.finish(frontend)
+
+    def compile_project(self, sources) -> Compilation:
+        if not hasattr(self.frontend, "lower_project"):
+            raise TypeError("this frontend does not support multiple translation units")
+        return self.finish(self.frontend.lower_project(sources))
+
+    def finish(self, frontend) -> Compilation:
         ir = optimize(frontend.ir)
         legalize_runtime_arithmetic(ir)
         ir = optimize(ir)
@@ -36,3 +44,9 @@ class Compiler:
 
 def compile_source(source, filename="<input>", target=None):
     return Compiler(CFrontend(), target).compile(source, filename)
+
+
+def compile_sources(sources, target=None, include_dirs=(), defines=()):
+    """Compile ``[(filename, source), ...]`` as one linked C program."""
+    frontend = CFrontend(include_dirs=include_dirs, defines=defines)
+    return Compiler(frontend, target).compile_project(sources)

@@ -8,7 +8,7 @@ setup(
         Extension(
             "dynphony.emulator._native",
             ["dynphony/emulator/native_emulator.c"],
-            extra_compile_args=["/O2"] if sys.platform == "win32" else ["-O3"],
+            extra_compile_args=["/O3"] if sys.platform == "win32" else ["-O3"],
             optional=True,
         )
     ]

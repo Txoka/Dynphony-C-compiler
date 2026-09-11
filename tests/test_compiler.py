@@ -475,6 +475,14 @@ class ExecutionTests(unittest.TestCase):
             65534,
         )
 
+    def test_parameter_register_moves_do_not_clobber_later_arguments(self):
+        run(
+            "int f(int a,int b,int c,int d,int e){"
+            "if(a==0)return b; return a+a+a+c+d+e;}"
+            "int main(void){return f(10,20,3,4,5);}",
+            42,
+        )
+
     def test_scope(self):
         run(
             "int x=2; int main(void){int x=3; {int x=4; x++;} for(int x=0;x<3;x++){} return x;}",
@@ -521,6 +529,10 @@ class ExecutionTests(unittest.TestCase):
         run(
             "const int global=12; int main(void){const int local=30; "
             "const int *p=&local; return global+*p;}",
+            42,
+        )
+        run(
+            "int main(void){int a=20,b=22; const int *p=&a; p=&b; return a+*p;}",
             42,
         )
         run(

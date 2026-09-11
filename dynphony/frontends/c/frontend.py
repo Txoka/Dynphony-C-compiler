@@ -150,7 +150,11 @@ class Frontend:
 
     def typename(self, t):
         if isinstance(t, (c.Decl, c.Typename, c.Typedef)):
-            return self.apply_qualifiers(t, self.typename(t.type), t.quals)
+            # pycparser mirrors declaration qualifiers onto ``Decl.quals`` as
+            # well as placing them on the declarator node they actually
+            # qualify.  Applying both makes ``const char *p`` a const pointer
+            # instead of a mutable pointer to const char.
+            return self.typename(t.type)
         if isinstance(t, c.TypeDecl):
             return self.apply_qualifiers(t, self.typename(t.type), t.quals)
         if isinstance(t, c.IdentifierType):

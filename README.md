@@ -4,6 +4,12 @@ A runnable Python compiler for a useful C subset. It emits **flat, big-endian Dy
 
 The implementation separates syntax parsing, semantic analysis, typed syntax, IR lowering, optimization, instruction selection, and binary layout. It includes a reference emulator and automated execution/encoding tests.
 
+An initial compiler written in the supported C subset now lives in
+[`selfhost/`](selfhost/README.md). It is a deliberately narrow executable
+bootstrap stage: it runs on the Dynphony emulator and compiles constant-return C
+programs into runnable Dynphony images. Use `make selfhost-test` for its complete
+compile-the-compiler/compile-a-program/run-the-program test.
+
 ## Run it
 
 Requires Python 3.10+ and `pycparser`. From this project's directory:

@@ -661,20 +661,50 @@ class Backend:
             for instruction in f.instructions
             if instruction.op == "param"
         }
-        for r, sym in enumerate(f.params, 1):
+        # Store every register parameter that needs a frame slot before moving
+        # any promoted parameter into its allocated home.  A move such as
+        # r1 -> r4 must not destroy the still-unhandled fourth argument.
+        register_moves = []
+        for r, sym in enumerate(f.params[:6], 1):
             if sym.key in promoted:
                 instruction = promoted[sym.key]
-                if r <= 6:
+                destination = self.register_values.get(instruction.dst)
+                if destination is None:
                     self.put(instruction.dst, r)
-                else:
-                    self.load_stack_parameter(r, sym.type, len(saved_registers))
-                    self.put(instruction.dst, 1)
-                continue
-            self.slot_address(self.locals[sym.key])
-            if r <= 6:
-                a.emit(isa.store(sym.type.size, 7, r))
+                elif destination != r:
+                    register_moves.append([destination, r])
             else:
-                self.load_stack_parameter(r, sym.type, len(saved_registers))
+                self.slot_address(self.locals[sym.key])
+                a.emit(isa.store(sym.type.size, 7, r))
+
+        # Resolve the incoming-register permutation in parallel, using the ABI
+        # scratch register to break cycles.
+        while register_moves:
+            selected = next(
+                (
+                    index
+                    for index, (target, _) in enumerate(register_moves)
+                    if target
+                    not in {
+                        source
+                        for other, source in register_moves
+                        if other != target
+                    }
+                ),
+                None,
+            )
+            if selected is None:
+                a.emit(isa.mov(7, register_moves[0][1]))
+                register_moves[0][1] = 7
+                continue
+            target, source = register_moves.pop(selected)
+            a.emit(isa.mov(target, source))
+
+        for r, sym in enumerate(f.params[6:], 7):
+            self.load_stack_parameter(r, sym.type, len(saved_registers))
+            if sym.key in promoted:
+                self.put(promoted[sym.key].dst, 1)
+            else:
                 self.slot_address(self.locals[sym.key])
                 a.emit(isa.store(sym.type.size, 7, 1))
         epilogue = self.unique()

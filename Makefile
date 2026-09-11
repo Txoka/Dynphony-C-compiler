@@ -2,7 +2,7 @@ PYTHON ?= python
 DIST_DIR ?= dist
 WHEEL_DIR ?= $(DIST_DIR)/wheels
 
-.PHONY: native install test wheel sdist dist clean
+.PHONY: native install test wheel ci-wheels sdist dist clean
 
 native:
 	$(PYTHON) setup.py build_ext --inplace
@@ -16,6 +16,10 @@ test: native
 wheel:
 	mkdir -p $(WHEEL_DIR)
 	$(PYTHON) -m pip wheel --no-deps --no-build-isolation --wheel-dir $(WHEEL_DIR) .
+
+ci-wheels:
+	mkdir -p $(WHEEL_DIR)
+	$(PYTHON) -m cibuildwheel --output-dir $(WHEEL_DIR)
 
 sdist:
 	$(PYTHON) setup.py sdist --dist-dir $(DIST_DIR)

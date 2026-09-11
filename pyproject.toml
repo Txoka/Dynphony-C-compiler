@@ -14,3 +14,13 @@ dyncc = "dynphony.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["dynphony*"]
+
+[tool.cibuildwheel]
+build = "cp3{10,11,12,13,14,15}-*"
+test-command = "python -c \"from dynphony import compile_source; from dynphony.emulator import Machine, native_available, native_run; assert native_available(); r=compile_source('int main(void){return 6*7;}'); m=Machine(r.image.binary); assert native_run(m, r.image.symbols['_halt']) == 42\""
+
+[tool.cibuildwheel.macos]
+archs = ["x86_64", "arm64", "universal2"]
+
+[tool.cibuildwheel.windows]
+archs = ["AMD64", "x86", "ARM64"]

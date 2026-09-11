@@ -1,0 +1,163 @@
+name: Release wheels
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate tag and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Check tag matches package version
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import tomllib
+
+          version = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          tagged_version = tag[1:] if tag.startswith("v") else tag
+          if tagged_version != version:
+              raise SystemExit(
+                  f"tag {tag!r} does not match pyproject.toml version {version!r}"
+              )
+          PY
+      - name: Install and run tests
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m unittest discover -s tests -v
+
+  wheels:
+    name: ${{ matrix.name }} wheels
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86-64
+            os: ubuntu-latest
+            archs: "x86_64"
+            qemu: false
+          - name: linux-x86-32
+            os: ubuntu-latest
+            archs: "i686"
+            qemu: false
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            archs: "aarch64"
+            qemu: false
+          - name: linux-armv7
+            os: ubuntu-24.04-arm
+            archs: "armv7l"
+            qemu: true
+          - name: linux-ppc64le
+            os: ubuntu-latest
+            archs: "ppc64le"
+            qemu: true
+          - name: linux-s390x
+            os: ubuntu-latest
+            archs: "s390x"
+            qemu: true
+          - name: linux-riscv64
+            os: ubuntu-latest
+            archs: "riscv64"
+            qemu: true
+          - name: macos-intel
+            os: macos-15-intel
+            archs: "x86_64 universal2"
+            qemu: false
+          - name: macos-arm
+            os: macos-latest
+            archs: "arm64"
+            qemu: false
+          - name: windows-x86
+            os: windows-latest
+            archs: "AMD64 x86"
+            qemu: false
+          - name: windows-arm
+            os: windows-11-arm
+            archs: "ARM64"
+            qemu: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - name: Enable emulated CPU architectures
+        if: matrix.qemu
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+      - name: Install cibuildwheel
+        run: python -m pip install cibuildwheel==4.2.1
+      - name: Build and test wheels
+        run: python -m cibuildwheel --output-dir wheelhouse
+        env:
+          CIBW_ARCHS: ${{ matrix.archs }}
+      - name: Upload wheels
+        uses: actions/upload-artifact@v7
+        with:
+          name: wheels-${{ matrix.name }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  sdist:
+    name: Source distribution
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Build sdist
+        run: |
+          python -m pip install build
+          python -m build --sdist
+      - name: Upload sdist
+        uses: actions/upload-artifact@v7
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [wheels, sdist]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create release and upload distributions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --verify-tag --generate-notes --title "$TAG"
+          fi

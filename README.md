@@ -41,6 +41,9 @@ python -m unittest discover -s tests -v
 
 ## Supported language
 
+The complete support matrix, known limitations, and Dynphony-specific built-ins
+are documented in [docs/c-language-support.md](docs/c-language-support.md).
+
 - Plain `char` is unsigned; explicit signed/unsigned `char`, `short`, `int`, and `long` are supported.
 - Pointers, pointers to pointers, function pointers, explicit integer/pointer casts, and `void` functions/pointers.
 - Local variables and lexical scopes; file-scope globals, `static` globals/functions, static locals, external declarations resolved within this translation unit, and file/block-scope typedefs.

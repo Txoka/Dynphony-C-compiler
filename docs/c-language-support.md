@@ -1,0 +1,175 @@
+# C language and Dynphony extension reference
+
+Dynphony C implements a practical freestanding subset of C. It compiles one C
+source file directly into a flat Dynphony memory image; it does not invoke a
+preprocessor, assembler, system linker, or operating-system runtime.
+
+## Implemented C features
+
+### Scalar types and conversions
+
+| Feature | Status and target representation |
+|---|---|
+| `char` | 8-bit unsigned by default |
+| `signed char`, `unsigned char` | 8 bit |
+| `short`, `unsigned short` | 16 bit |
+| `int`, `unsigned int` | 32 bit |
+| `long`, `unsigned long` | 32 bit, with the same current representation as `int` |
+| `void` | Functions, return types, casts, and `void *` |
+| Pointers | 32-bit byte addresses; object, pointer-to-pointer, and function pointers |
+| Enums | Named or anonymous; implicit and integer-constant values; represented as signed 32-bit `int` |
+| `const` | Const objects and pointers, modification diagnostics, and qualifier-preserving pointer conversions |
+| Casts | Explicit integer and pointer casts, integer promotions, and usual arithmetic conversions for supported widths |
+
+The standard spellings `signed` and `unsigned` mean `signed int` and `unsigned
+int`. Names such as `uint` are not built-in C type names; a program may define
+one with `typedef unsigned int uint;`.
+
+Integer loads are big-endian. Eight- and sixteen-bit loads zero-extend; signed
+values are explicitly sign-extended when required. Integer arithmetic wraps in
+the generated machine operations. The compiler does not currently exploit
+signed-overflow undefined behavior.
+
+### Expressions and operators
+
+- Decimal, octal, and hexadecimal integer constants, including supported `U`
+  and `L` suffixes.
+- Single-byte character and string literals, adjacent string concatenation, and
+  ordinary C escapes.
+- `//` line comments and `/* ... */` block comments.
+- `+`, `-`, `*`, `/`, `%`, unary `+`/`-`, and bitwise complement.
+- `&`, `|`, `^`, `<<`, and `>>`.
+- `==`, `!=`, `<`, `<=`, `>`, and `>=`.
+- Short-circuit `&&` and `||`, plus logical `!`.
+- Assignment and arithmetic/bitwise compound assignment.
+- Prefix and postfix increment/decrement.
+- Address-of, dereference, array indexing, pointer arithmetic, and pointer
+  difference.
+- Conditional `?:` and comma expressions.
+- Unevaluated `sizeof expression` and `sizeof(type)`. There is no variable-length
+  array case, so every supported `sizeof` is a compile-time constant.
+
+Multiplication, division, and remainder use software helpers only when surviving
+optimized code needs them. Constant expressions and suitable power-of-two
+operations do not pull those helpers into the image.
+
+### Declarations, storage, and scopes
+
+- Local variables with nested lexical scopes.
+- File-scope globals with zero or constant initialization.
+- `static` file-scope objects and functions.
+- Static local objects with program lifetime and block scope. Their initializers
+  must currently be compile-time constants.
+- File-scope `extern` declarations resolved inside the same source file.
+- File-scope and block-scope `typedef` declarations, including normal shadowing.
+- Fixed-size arrays, multidimensional arrays, inferred outer bounds, partial
+  brace initialization, and character-array initialization from strings.
+- Symbolic static pointer initializers such as `int *p = &values[2]`.
+
+### Structures
+
+- Named and anonymous structures.
+- Forward declarations and self-referential structure pointers.
+- Natural member alignment capped at four bytes, including tail padding.
+- Nested structures and arrays as members.
+- Member access with `.` and `->`.
+- Nested brace initialization for global and local structure objects.
+- `sizeof` for complete structure types and structure expressions.
+
+### Statements and functions
+
+- Expression, compound, and return statements.
+- `if`/`else`.
+- `while`, `do`/`while`, and `for`, including declaration initializers.
+- `break` and `continue` inside loops.
+- Function declarations and definitions, direct calls, indirect function-pointer
+  calls, ordinary recursion, and optimized tail calls.
+- Scalar parameters and scalar return values. Arguments one through six use
+  `r1` through `r6`; later scalar arguments are passed on the stack. `r1` holds
+  the return value.
+
+The program entry point must be `int main(void)` or `int main()`. In this subset,
+an empty parameter list means no parameters. Falling out of `main` returns zero.
+
+## Unsupported or incomplete C features
+
+| Area | Missing support |
+|---|---|
+| Source processing | Preprocessor directives, `#include`, macros, conditional compilation, and source headers |
+| Separate compilation | Multiple translation units, object files, external libraries, and linking |
+| Types | `_Bool`, `long long`, floating point, complex types, unions, and bit-fields |
+| Qualifiers/specifiers | `volatile`, `restrict`, `_Atomic`, thread-local storage, and local `extern` |
+| Aggregate operations | Structure assignment and structures passed to or returned from functions by value |
+| Initializers | Designated initializers and general brace elision |
+| Arrays | Variable-length arrays and flexible array members |
+| Control flow | `switch`/`case`/`default`, `goto`, and labels used by `goto` |
+| Functions | Variadic functions, old-style definitions, and aggregate calling conventions |
+| Runtime library | Standard headers and library functions, including bundled `malloc`, `free`, `memcpy`, and `memset` |
+| Character support | Wide and Unicode character/string literal types |
+| Low-level extensions | Inline assembly and compiler-specific attribute syntax |
+
+Multiple tentative definitions of one global are rejected rather than merged.
+Array bounds must be compile-time constants. Aggregate initialization requires
+the currently supported nested-brace form. Decimal constants above `2147483647`
+need an explicit `U` suffix when their value fits `unsigned int`; values that
+require a 64-bit C type are unsupported.
+
+Generated code does not trap null dereferences, out-of-bounds accesses, invalid
+shifts, division by zero, stack overflow, or heap/stack collision. The compiler
+checks that the static image and largest individual frame fit configured RAM,
+but recursion depth remains a program responsibility.
+
+## Dynphony-specific built-ins
+
+The compiler automatically declares the following functions. Programs do not
+need a header, and calls lower directly to device instructions without normal
+function-call overhead.
+
+```c
+unsigned int input(void);
+void output(unsigned int value);
+
+unsigned int keyboard(void);
+void screen(unsigned int setting, unsigned int value);
+
+unsigned int time(void);
+unsigned int time_low(void);
+unsigned int time_high(void);
+
+unsigned int persistent_load(unsigned int address);
+void persistent_store(unsigned int address, unsigned int value);
+```
+
+| Built-in | Meaning |
+|---|---|
+| `input()` | Read the next value from the ordinary input device |
+| `output(value)` | Send one value to the ordinary output device |
+| `keyboard()` | Read the keyboard input value |
+| `screen(setting, value)` | Send a setting/value update to the screen device |
+| `time()` | Alias for the low 32 bits of the time device |
+| `time_low()` | Read the low 32 bits of time |
+| `time_high()` | Read the high 32 bits of time |
+| `persistent_load(address)` | Load a value from persistent storage |
+| `persistent_store(address, value)` | Store a value in persistent storage |
+
+These names are reserved and cannot be redefined by a program. The reference
+emulator records `output` values and screen updates, accepts queued input and
+keyboard values, and models configurable persistent storage.
+
+## Other target facilities
+
+- Flat raw binary output with code and static data in one unified memory image.
+- Configurable power-of-two RAM and persistent-memory sizes.
+- Configurable fixed load address, defaulting to zero.
+- Optional position-independent output. PIC startup obtains the runtime image
+  base with `counter` and rebases static pointer initializers.
+- A JSON symbol/map output and an inspectable optimized IR dump.
+- A reference emulator for generated instruction bytes.
+- Software 32-bit multiply, signed/unsigned divide, and remainder helpers, linked
+  into the image only when reachable.
+- Infinite self-jump termination with the value returned by `main` retained in
+  `r1`.
+
+The arena allocator example demonstrates allocation in the supported subset,
+but it is application source rather than a built-in C feature. A reference-on-
+demand memory and `malloc`/`free` runtime is tracked in the optimization roadmap.

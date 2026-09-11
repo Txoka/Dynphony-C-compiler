@@ -49,7 +49,7 @@ def promote_scalar_locals(function):
     promotable = {}
     for symbol in function.locals:
         values = addresses.get(symbol.key, ())
-        if not values or symbol.type.kind not in ("int", "pointer"):
+        if not values or symbol.type.kind not in ("int", "bool", "pointer"):
             continue
         if all(
             all(
@@ -84,8 +84,10 @@ def promote_scalar_locals(function):
 
 
 def _normalize(value, type_):
-    if type_.kind not in ("int", "pointer"):
+    if type_.kind not in ("int", "bool", "pointer"):
         return value
+    if type_.kind == "bool":
+        return int(bool(value))
     bits = type_.size * 8
     mask = (1 << bits) - 1
     value &= mask

@@ -2,7 +2,7 @@
 
 Validated in the development environment on 2026-09-11 with Python 3.13 and pycparser 2.22.
 
-- `python -m unittest discover -s tests -v`: **44 test methods passed**, including package boundaries, named registers and ABI roles, canonical lowering, structures and natural layout, self-referential structure pointers, enums, `const`, local typedefs, static locals, register and stack-passed scalar arguments, the arena allocator, direct/indirect call IR, conditional fallthrough IR, CFG reachability, the global Tier 1 fixed point, constant collapse, register allocation, tail calls, device intrinsics, and fixed/PIC termination. Final run: 4.224 seconds.
+- `python -m unittest discover -s tests -v`: **45 test methods passed**, including package boundaries, named registers and ABI roles, canonical lowering, `_Bool`/`bool` conversions, structures and natural layout, self-referential structure pointers, enums, `const`, local typedefs, static locals, register and stack-passed scalar arguments, the arena allocator, direct/indirect call IR, conditional fallthrough IR, CFG reachability, the global Tier 1 fixed point, constant collapse, register allocation, tail calls, device intrinsics, and fixed/PIC termination. Final run: 4.052 seconds.
 - Wheel build with `pip wheel --no-build-isolation --no-deps`: passed.
 - Wheel installed into a separate directory; imported outside the source checkout and compiled/executed `6 * 7`: returned **42**.
 - Fixed-address demonstration: **662 bytes**, returned **146**, 945 emulated instructions. Before the optimization passes it was 1,572 bytes and 2,195 instructions.

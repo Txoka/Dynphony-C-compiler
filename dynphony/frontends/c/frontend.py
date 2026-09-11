@@ -10,6 +10,7 @@ from ...middle.model import (
     INT,
     UINT,
     CHAR,
+    BOOL,
     VOID,
     pointer,
     array,
@@ -155,7 +156,7 @@ class Frontend:
             if names == ["void"]:
                 return VOID
             if names == ["_Bool"]:
-                self.fail(t, "_Bool is not yet supported")
+                return BOOL
             if any(
                 n not in ("signed", "unsigned", "char", "short", "int", "long")
                 for n in names
@@ -283,6 +284,10 @@ class Frontend:
     def cast(self, n, t):
         if n.type == t:
             return n
+        # C requires conversion to _Bool to produce precisely 0 or 1, rather
+        # than merely truncating the low byte.
+        if t.kind == "bool":
+            return Node("bool_cast", t, [self.value(n)], location=n.location)
         return Node("cast", t, [n], location=n.location)
 
     def value(self, n):
@@ -713,8 +718,10 @@ class Frontend:
     def normalize_constant(value, type_):
         if isinstance(value, tuple):
             return value
-        if type_.kind not in ("int", "pointer"):
+        if type_.kind not in ("int", "bool", "pointer"):
             raise CompileError("constant requires an integer or pointer type")
+        if type_.kind == "bool":
+            return int(bool(value))
         bits = type_.size * 8
         value &= (1 << bits) - 1
         if type_.signed and value & (1 << (bits - 1)):

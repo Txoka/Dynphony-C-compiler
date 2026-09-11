@@ -125,6 +125,8 @@ class Lowerer:
             return self.address(n.children[0])
         if op == "cast":
             return self.cast(self.expr(n.children[0]), n.type)
+        if op == "bool_cast":
+            return self.binary("!=", self.expr(n.children[0]), self.const(0), n.type)
         if op == "unary":
             return self.emit("unary", (self.expr(n.children[0]),), n.type, n.value)
         if op == "pointer_add":

@@ -12,6 +12,7 @@ preprocessor, assembler, system linker, or operating-system runtime.
 |---|---|
 | `char` | 8-bit unsigned by default |
 | `signed char`, `unsigned char` | 8 bit |
+| `_Bool`, `bool` | 8-bit values canonically stored as `0` or `1`; `bool` is a built-in convenience alias because this freestanding compiler has no `<stdbool.h>` |
 | `short`, `unsigned short` | 16 bit |
 | `int`, `unsigned int` | 32 bit |
 | `long`, `unsigned long` | 32 bit, with the same current representation as `int` |
@@ -97,7 +98,7 @@ an empty parameter list means no parameters. Falling out of `main` returns zero.
 |---|---|
 | Source processing | Preprocessor directives, `#include`, macros, conditional compilation, and source headers |
 | Separate compilation | Multiple translation units, object files, external libraries, and linking |
-| Types | `_Bool`, `long long`, floating point, complex types, unions, and bit-fields |
+| Types | `long long`, floating point, complex types, unions, and bit-fields |
 | Qualifiers/specifiers | `volatile`, `restrict`, `_Atomic`, thread-local storage, and local `extern` |
 | Aggregate operations | Structure assignment and structures passed to or returned from functions by value |
 | Initializers | Designated initializers and general brace elision |
@@ -113,6 +114,26 @@ Array bounds must be compile-time constants. Aggregate initialization requires
 the currently supported nested-brace form. Decimal constants above `2147483647`
 need an explicit `U` suffix when their value fits `unsigned int`; values that
 require a 64-bit C type are unsupported.
+
+### Dynamic storage and runtime-sized arrays
+
+Fixed arrays are complete: this includes `char text[64]`, inferred bounds from
+string literals, multidimensional arrays, globals, locals, indexing, and
+pointer decay. The compiler also supports using a pointer as dynamic storage
+once application code obtains that pointer; `examples/arena_allocator.c` shows
+an aligned bump allocator built entirely in the supported subset.
+
+Two different C facilities remain absent:
+
+- A variable-length array such as `char text[count]` needs dynamic stack-space
+  reservation and cleanup on every return, `break`, and control-flow edge. The
+  current frame layout is deliberately fixed before backend lowering, so it
+  rejects such bounds instead of emitting an unsafe frame.
+- `malloc`/`free` need a chosen heap region, allocation policy, failure rule,
+  and a stable runtime API. There is no operating system to supply those. A
+  bundled reference runtime can provide this without changing the C frontend;
+  `malloc` can then back ordinary pointer-based dynamic arrays such as
+  `char *text = malloc(count)`.
 
 Generated code does not trap null dereferences, out-of-bounds accesses, invalid
 shifts, division by zero, stack overflow, or heap/stack collision. The compiler

@@ -139,6 +139,19 @@ class ExecutionTests(unittest.TestCase):
         run('int main(void){char s[6]="Hi"; return s[0]+s[1]+s[2]+s[5];}', 177)
         run("int main(void){int a=0; return sizeof(a++)+a;}", 4)
 
+    def test_bool_type_and_char_arrays(self):
+        run(
+            """_Bool nonzero(unsigned int value) { return value; }
+            int main(void) {
+                bool flags[3] = {0, 9, 0};
+                char bytes[] = {4, 5, 6};
+                flags[2] = nonzero(bytes[0] - 4);
+                return sizeof(_Bool) * 100 + flags[0] * 10 + flags[1] * 5
+                    + flags[2] + bytes[1];
+            }""",
+            110,
+        )
+
     def test_big_endian_and_unaligned(self):
         run(
             "int main(void){int x=0x12345678; unsigned char *p=(unsigned char*)&x; return p[0]*256+p[3];}",

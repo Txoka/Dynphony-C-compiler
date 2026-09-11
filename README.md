@@ -131,7 +131,7 @@ reserved and cannot be used for user-defined functions.
 This is a C subset compiler, not a conforming full C implementation. Unsupported constructs produce diagnostics where encountered:
 
 - No preprocessor (`#include`, `#define`, etc.), headers, standard library, heap, or separate linking.
-- No 64-bit `long long`, `_Bool`, floating point, unions, bit-fields, or variadic functions.
+- No 64-bit `long long`, floating point, unions, bit-fields, or variadic functions.
 - No `volatile` or `restrict`, local `extern`, variable-length arrays, designated initializers, `switch`, `goto`, or inline assembly.
 - No aggregate arguments/returns or old-style function definitions.
 - Structure assignment is not implemented. Aggregate initializers require nested braces; brace elision and designated initialization are not implemented. Array bounds must be compile-time constants. Multiple tentative global definitions are rejected rather than merged.

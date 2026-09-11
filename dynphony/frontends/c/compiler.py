@@ -16,7 +16,9 @@ class CFrontend:
     def lower(self, source: str, filename: str = "<input>") -> FrontendResult:
         if re.search(r"\b__dyn_\w*", strip_comments(source)):
             raise CompileError("identifiers beginning __dyn_ are reserved for the runtime")
-        parsed = parse(source, filename)
+        # This freestanding compiler has no <stdbool.h> or preprocessor. Make
+        # the standard spelling available as a small language extension.
+        parsed = parse("typedef _Bool bool;\n" + source, filename)
         for item in parsed.ext:
             if isinstance(item, c_ast.FuncDef) and item.decl.name in INTRINSIC_NAMES:
                 raise CompileError(

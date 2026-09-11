@@ -62,7 +62,7 @@ class Type:
 
     @property
     def integer(self):
-        return self.kind == "int"
+        return self.kind in ("int", "bool")
 
     def decay(self):
         return (
@@ -109,12 +109,15 @@ class Type:
             return f"{prefix}struct {self.record.tag or '<anonymous>'}"
         if self.kind == "void":
             return f"{prefix}void"
+        if self.kind == "bool":
+            return f"{prefix}_Bool"
         return f'{prefix}{"i" if self.signed else "u"}{self.size * 8}'
 
 
 INT = Type()
 UINT = Type(signed=False)
 CHAR = Type(size=1, signed=False)
+BOOL = Type("bool", size=1, signed=False)
 VOID = Type("void", 0, False)
 
 

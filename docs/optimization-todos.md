@@ -62,12 +62,9 @@ Remaining work, in dependency and payoff order:
    by loop-depth spill costs and better caller-saved allocation.
 8. [ ] Add the small post-allocation peephole pass and iterate it with branch/call
    relaxation. It should only remove artifacts requiring physical-register knowledge.
-9. [ ] Relocate eligible non-tail recursive functions with one external caller only
-   when distinct recursive frames and outer/recursive return continuations can be
-   represented without body duplication or runtime growth. Tail recursion is done.
-10. [ ] Add flag liveness and profile/cost-guided block ordering after the preceding
+9. [ ] Add flag liveness and profile/cost-guided block ordering after the preceding
     CFG and register foundations are stable.
-11. [ ] Implement the memory-runtime work (`mem*`, heap, and allocation) independently
+10. [ ] Implement the memory-runtime work (`mem*`, heap, and allocation) independently
     of optimizer correctness; retain collision checks as an opt-in target policy.
 
 ## Deferred and optional work
@@ -90,6 +87,12 @@ Remaining work, in dependency and payoff order:
   and writable-code assumptions.
 - [ ] Consider specialization, multi-site inlining, and loop unrolling only behind
   an explicit speed/size policy because they can grow the image.
+- [ ] Defer non-tail recursive fallthrough-call layout. For a recursive function
+  with one external direct caller, split the caller around that site, pre-push its
+  known continuation, place the recursive function next, and let the first entry
+  fall through while recursive entries keep calling the stable function label.
+  Apply it only after final-layout comparison proves no binary-size or runtime
+  regression, including fixed-address and PIC continuation costs.
 - [ ] Treat self-hosting as a separate language/runtime roadmap. Structs, an arena,
   and bootstrap stages are useful project goals, but they are not optimizer passes.
 

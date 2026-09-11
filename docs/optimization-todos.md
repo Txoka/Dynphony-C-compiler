@@ -17,6 +17,15 @@ Completed foundations:
 - [x] Eliminate safe tail calls after restoring the current frame.
 - [x] Emit known-symbol calls directly from lowering and retain a separate indirect-call form.
 - [x] Emit conditional branches with one explicit target and one CFG fallthrough edge.
+- [x] Model promoted locals with transient SSA versions and phi joins during sparse analysis.
+- [x] Run sparse conditional constant propagation across blocks and remove infeasible CFG edges.
+- [x] Propagate immutable copy/cast chains across blocks without breaking mutable snapshots.
+- [x] Legalize surviving software arithmetic into explicit Dynphony runtime calls, then rerun
+  the global fixed point so ordinary reachability and inlining remove one-use wrappers.
+- [x] Inline callees containing tail calls by preserving their outer continuation.
+- [x] Convert safe direct self-tail recursion into parallel parameter updates and a loop backedge.
+- [x] Apply the expanded no-growth identity set, including self-comparisons and division or
+  remainder by one.
 
 The next milestone is one global fixed point containing only Tier 1 transformations:
 surviving function bodies are never duplicated, and a transformation is kept

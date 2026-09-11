@@ -8,18 +8,57 @@ class CompileError(Exception):
     """A source or target configuration diagnostic safe to show to a user."""
 
 
-@dataclass(frozen=True)
+@dataclass(eq=False)
+class Record:
+    tag: str
+    members: tuple = ()
+    size: int = 0
+    alignment: int = 1
+    complete: bool = False
+
+
+@dataclass(frozen=True, init=False)
 class Type:
-    kind: str = "int"
-    size: int = 4
-    signed: bool = True
-    base: "Type | None" = None
-    count: int = 0
-    params: tuple = ()
+    kind: str
+    width: int
+    signed: bool
+    base: "Type | None"
+    count: int
+    params: tuple
+    record: Record | None
+    qualifiers: frozenset[str]
+
+    def __init__(
+        self,
+        kind="int",
+        size=4,
+        signed=True,
+        base=None,
+        count=0,
+        params=(),
+        record=None,
+        qualifiers=(),
+    ):
+        object.__setattr__(self, "kind", kind)
+        object.__setattr__(self, "width", size)
+        object.__setattr__(self, "signed", signed)
+        object.__setattr__(self, "base", base)
+        object.__setattr__(self, "count", count)
+        object.__setattr__(self, "params", tuple(params))
+        object.__setattr__(self, "record", record)
+        object.__setattr__(self, "qualifiers", frozenset(qualifiers))
+
+    @property
+    def size(self):
+        return self.record.size if self.kind == "struct" else self.width
 
     @property
     def align(self):
-        return self.base.align if self.kind == "array" else min(max(self.size, 1), 4)
+        if self.kind == "array":
+            return self.base.align
+        if self.kind == "struct":
+            return self.record.alignment
+        return min(max(self.size, 1), 4)
 
     @property
     def integer(self):
@@ -35,16 +74,42 @@ class Type:
     def promote(self):
         return INT if self.integer and self.size < 4 else self.decay()
 
+    def qualified(self, *names):
+        return Type(
+            self.kind,
+            self.width,
+            self.signed,
+            self.base,
+            self.count,
+            self.params,
+            self.record,
+            self.qualifiers | set(names),
+        )
+
+    def unqualified(self):
+        return Type(
+            self.kind,
+            self.width,
+            self.signed,
+            self.base,
+            self.count,
+            self.params,
+            self.record,
+        )
+
     def __str__(self):
+        prefix = "const " if "const" in self.qualifiers else ""
         if self.kind == "pointer":
-            return f"{self.base}*"
+            return f"{prefix}{self.base}*"
         if self.kind == "array":
-            return f"{self.base}[{self.count}]"
+            return f"{prefix}{self.base}[{self.count}]"
         if self.kind == "function":
-            return f'{self.base}({", ".join(map(str, self.params))})'
+            return f'{prefix}{self.base}({", ".join(map(str, self.params))})'
+        if self.kind == "struct":
+            return f"{prefix}struct {self.record.tag or '<anonymous>'}"
         if self.kind == "void":
-            return "void"
-        return f'{"i" if self.signed else "u"}{self.size * 8}'
+            return f"{prefix}void"
+        return f'{prefix}{"i" if self.signed else "u"}{self.size * 8}'
 
 
 INT = Type()
@@ -74,6 +139,7 @@ class Symbol:
     type: Type
     storage: str  # global, function, local, parameter
     key: str
+    constant: int | None = None
 
 
 @dataclass

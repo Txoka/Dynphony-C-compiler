@@ -140,6 +140,8 @@ class Backend:
 
     @staticmethod
     def straight_leaf_eligible(f):
+        if len(f.params) > 6:
+            return False
         allowed = {
             "param",
             "const",
@@ -450,15 +452,21 @@ class Backend:
             raise AssertionError(f"unknown intrinsic {name}")
 
     def place_call_arguments(self, arguments):
-        """Place arguments as a parallel register assignment when possible."""
-        homes = [self.register_values.get(value) for value in arguments]
+        """Place register arguments and push arguments seven onward right-to-left."""
+        register_arguments = arguments[:6]
+        stack_arguments = arguments[6:]
+        for value in reversed(stack_arguments):
+            self.get(value, 1)
+            self.a.emit(isa.push(1))
+
+        homes = [self.register_values.get(value) for value in register_arguments]
         caller_homes = any(
             home is not None and 3 <= home <= 6 for home in homes
         )
         if not caller_homes:
-            for register, value in enumerate(arguments, 1):
+            for register, value in enumerate(register_arguments, 1):
                 self.get(value, register)
-            return
+            return len(stack_arguments)
 
         if all(home is not None for home in homes):
             pending = [
@@ -487,15 +495,38 @@ class Backend:
                     continue
                 target, source = pending.pop(selected)
                 self.a.emit(isa.mov(target, source))
-            return
+            return len(stack_arguments)
 
         # Mixed computed/register arguments need storage so materializing one
         # cannot overwrite a later caller-register source.
-        for value in arguments:
+        for value in register_arguments:
             self.get(value, 1)
             self.a.emit(isa.push(1))
-        for register in range(len(arguments), 0, -1):
+        for register in range(len(register_arguments), 0, -1):
             self.a.emit(isa.pop(register))
+        return len(stack_arguments)
+
+    def discard_stack_arguments(self, count):
+        if not count:
+            return
+        size = count * 4
+        if size <= 0xFFFF:
+            self.a.emit(isa.alu("add", 14, 14, size, True))
+        else:
+            self.a.emit(isa.cheap_constant(7, size))
+            self.a.emit(isa.alu("add", 14, 14, 7))
+
+    def load_stack_parameter(self, position, type_, saved_register_count, destination=1):
+        # r12 points below the saved caller frame pointer. The return address is
+        # at r12+4 and argument seven begins at r12+8.
+        offset = 4 * (position - 5 + saved_register_count)
+        if offset <= 0xFFFF:
+            self.a.emit(isa.alu("add", 7, 12, offset, True))
+        else:
+            self.a.emit(isa.cheap_constant(7, offset))
+            self.a.emit(isa.alu("add", 7, 12, 7))
+        self.a.emit(isa.load(type_.size, destination, 7))
+        self.normalize(destination, type_)
 
     def normalize(self, r, t):
         if t.kind == "int" and t.size < 4:
@@ -681,7 +712,7 @@ class Backend:
         # register set. It emits no lasting partial fast path in that case.
         del a.code[leaf_start:]
         frame = self.prepare_frame(f)
-        uses_frame = frame > 0
+        uses_frame = frame > 0 or len(f.params) > 6
         saved_registers = sorted(
             register for register in self.register_values.values() if register >= 8
         )
@@ -708,10 +739,19 @@ class Backend:
         for r, sym in enumerate(f.params, 1):
             if sym.key in promoted:
                 instruction = promoted[sym.key]
-                self.put(instruction.dst, r)
+                if r <= 6:
+                    self.put(instruction.dst, r)
+                else:
+                    self.load_stack_parameter(r, sym.type, len(saved_registers))
+                    self.put(instruction.dst, 1)
                 continue
             self.slot_address(self.locals[sym.key])
-            a.emit(isa.store(sym.type.size, 7, r))
+            if r <= 6:
+                a.emit(isa.store(sym.type.size, 7, r))
+            else:
+                self.load_stack_parameter(r, sym.type, len(saved_registers))
+                self.slot_address(self.locals[sym.key])
+                a.emit(isa.store(sym.type.size, 7, 1))
         epilogue = self.unique()
         terminated = False
         for instruction_index, i in enumerate(f.instructions):
@@ -824,7 +864,6 @@ class Backend:
                     )
             elif op == "call":
                 arguments = i.args[1:]
-                self.place_call_arguments(arguments)
                 target = self.rematerialized.get(i.args[0])
                 direct = (
                     target is not None
@@ -833,6 +872,11 @@ class Backend:
                     and target.extra in a.labels
                     and self.target.load_address + a.labels[target.extra] <= 0xFFFF
                 )
+                if not direct:
+                    # Preserve an indirect target before argument placement can
+                    # overwrite its allocated caller-saved register.
+                    self.get(i.args[0], 7)
+                stack_arguments = self.place_call_arguments(arguments)
                 if direct:
                     a.emit(
                         isa.call(
@@ -840,11 +884,10 @@ class Backend:
                         )
                     )
                 else:
-                    self.get(i.args[0], 7)
                     a.emit(isa.call(7))
+                self.discard_stack_arguments(stack_arguments)
                 self.normalize(1, i.type)
             elif op == "tailcall":
-                self.place_call_arguments(i.args[1:])
                 target = self.rematerialized.get(i.args[0])
                 direct = (
                     target is not None
@@ -855,6 +898,7 @@ class Backend:
                 )
                 if not direct:
                     self.get(i.args[0], 7)
+                self.place_call_arguments(i.args[1:])
                 if uses_frame:
                     a.emit(isa.mov(14, 12))
                     a.emit(isa.pop(12))

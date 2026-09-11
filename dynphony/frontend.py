@@ -5,6 +5,7 @@ from pycparser import c_ast as c, c_parser
 from .model import (
     CompileError,
     Type,
+    Record,
     INT,
     UINT,
     CHAR,
@@ -17,6 +18,7 @@ from .model import (
     Global,
     Function,
     Program,
+    align_up,
 )
 
 
@@ -122,7 +124,9 @@ def string_bytes(text):
 class Frontend:
     def __init__(self):
         self.scopes = [{}]
-        self.typedefs = {}
+        self.typedefs = [{}]
+        self.records = [{}]
+        self.enum_tags = [{}]
         self.globals = []
         self.functions = []
         self.locals = []
@@ -148,19 +152,28 @@ class Frontend:
                 return scope[source.name]
         self.fail(source, f"undeclared identifier {source.name}")
 
+    def lookup_type_name(self, name):
+        for scope in reversed(self.typedefs):
+            if name in scope:
+                return scope[name]
+        return None
+
+    def apply_qualifiers(self, source, type_, qualifiers):
+        unsupported = set(qualifiers or ()) - {"const"}
+        if unsupported:
+            self.fail(source, f"unsupported type qualifier: {sorted(unsupported)[0]}")
+        return type_.qualified(*qualifiers) if qualifiers else type_
+
     def typename(self, t):
-        if getattr(t, "quals", None):
-            self.fail(
-                t, "qualified types (const/volatile/restrict) are not yet supported"
-            )
         if isinstance(t, (c.Decl, c.Typename, c.Typedef)):
-            return self.typename(t.type)
+            return self.apply_qualifiers(t, self.typename(t.type), t.quals)
         if isinstance(t, c.TypeDecl):
-            return self.typename(t.type)
+            return self.apply_qualifiers(t, self.typename(t.type), t.quals)
         if isinstance(t, c.IdentifierType):
             names = t.names
-            if len(names) == 1 and names[0] in self.typedefs:
-                return self.typedefs[names[0]]
+            alias = self.lookup_type_name(names[0]) if len(names) == 1 else None
+            if alias is not None:
+                return alias
             if names == ["void"]:
                 return VOID
             if names == ["_Bool"]:
@@ -188,7 +201,7 @@ class Frontend:
             )
             return Type(size=size, signed=signed)
         if isinstance(t, c.PtrDecl):
-            return pointer(self.typename(t.type))
+            return self.apply_qualifiers(t, pointer(self.typename(t.type)), t.quals)
         if isinstance(t, c.ArrayDecl):
             base = self.typename(t.type)
             count = self.const_int(t.dim) if t.dim else 0
@@ -202,15 +215,77 @@ class Frontend:
                     if isinstance(p, c.EllipsisParam):
                         self.fail(p, "variadic functions are unsupported")
                     pt = self.typename(p).decay()
+                    if pt.kind == "struct":
+                        self.fail(p, "aggregate parameters are not yet supported")
                     params.append(pt)
                 if params == [VOID]:
                     params = []
-            if len(params) > 6:
-                self.fail(t, "at most six function arguments are supported")
             result = self.typename(t.type)
-            if result.kind in ("array", "function"):
+            if result.kind in ("array", "function", "struct"):
                 self.fail(t, "invalid function return type")
             return Type("function", 0, False, result, params=tuple(params))
+        if isinstance(t, c.Struct):
+            tag = t.name or ""
+            record = self.records[-1].get(tag) if tag and t.decls is not None else None
+            if tag and t.decls is None:
+                for scope in reversed(self.records):
+                    if tag in scope:
+                        record = scope[tag]
+                        break
+            if t.decls is None:
+                if record is None:
+                    record = Record(tag)
+                    self.records[-1][tag] = record
+                return Type("struct", 0, False, record=record)
+            if record is None or (record.complete and not tag):
+                record = Record(tag)
+                if tag:
+                    self.records[-1][tag] = record
+            elif record.complete:
+                self.fail(t, f"redefinition of struct {tag}")
+            members = []
+            offset = 0
+            alignment = 1
+            names = set()
+            for declaration in t.decls:
+                if declaration.bitsize is not None:
+                    self.fail(declaration, "bit-fields are not yet supported")
+                if not declaration.name:
+                    self.fail(declaration, "anonymous structure members are unsupported")
+                if declaration.name in names:
+                    self.fail(declaration, "duplicate structure member")
+                member_type = self.typename(declaration)
+                if member_type.kind in ("void", "function") or not member_type.size:
+                    self.fail(declaration, "structure member requires a complete object type")
+                offset = align_up(offset, member_type.align)
+                members.append((declaration.name, member_type, offset))
+                names.add(declaration.name)
+                offset += member_type.size
+                alignment = max(alignment, member_type.align)
+            record.members = tuple(members)
+            record.alignment = alignment
+            record.size = align_up(offset, alignment)
+            record.complete = True
+            return Type("struct", 0, False, record=record)
+        if isinstance(t, c.Enum):
+            tag = t.name or ""
+            if t.values is None:
+                if not any(tag in scope for scope in reversed(self.enum_tags)):
+                    self.fail(t, f"unknown enum {tag}")
+                return INT
+            if tag and tag in self.enum_tags[-1]:
+                self.fail(t, f"redefinition of enum {tag}")
+            value = -1
+            for enumerator in t.values.enumerators:
+                if enumerator.name in self.scopes[-1]:
+                    self.fail(enumerator, "duplicate enumerator")
+                value = self.const_int(enumerator.value) if enumerator.value else value + 1
+                self.scopes[-1][enumerator.name] = Symbol(
+                    enumerator.name, INT, "enum", enumerator.name, value
+                )
+            if tag:
+                self.enum_tags[-1][tag] = True
+            return INT
         self.fail(t, f"unsupported type: {type(t).__name__}")
 
     def const_int(self, source):
@@ -249,7 +324,17 @@ class Frontend:
             return self.cast(n, t)
         if t.kind == "pointer":
             if n.type.kind == "pointer" and (
-                n.type == t or n.type.base == VOID or t.base == VOID
+                n.type == t
+                or n.type.base.unqualified() == VOID
+                or t.base.unqualified() == VOID
+            ):
+                if not n.type.base.qualifiers <= t.base.qualifiers:
+                    self.fail(source, f"cannot discard qualifiers converting {n.type} to {t}")
+                return self.cast(n, t)
+            if (
+                n.type.kind == "pointer"
+                and n.type.base.unqualified() == t.base.unqualified()
+                and n.type.base.qualifiers <= t.base.qualifiers
             ):
                 return self.cast(n, t)
             if n.op == "const" and n.value == 0:
@@ -330,6 +415,8 @@ class Frontend:
             return self.node(s, "const", UINT if unsigned else INT, value=v)
         if isinstance(s, c.ID):
             sym = self.lookup(s)
+            if sym.storage == "enum":
+                return self.node(s, "const", INT, value=sym.constant)
             return self.node(
                 s, "var", sym.type, value=sym, lvalue=sym.storage != "function"
             )
@@ -340,6 +427,30 @@ class Frontend:
             if p.type.kind != "pointer":
                 self.fail(s, "array subscript requires a pointer")
             return self.node(s, "deref", p.type.base, [p], lvalue=True)
+        if isinstance(s, c.StructRef):
+            base = self.expr(s.name)
+            if s.type == "->":
+                address = self.value(base)
+                if address.type.kind != "pointer" or address.type.base.kind != "struct":
+                    self.fail(s, "-> requires a pointer to structure")
+                structure = address.type.base
+            else:
+                if base.type.kind != "struct" or not base.lvalue:
+                    self.fail(s, ". requires a structure lvalue")
+                structure = base.type
+                address = self.node(s, "address", pointer(structure), [base])
+            member = next(
+                (item for item in structure.record.members if item[0] == s.field.name),
+                None,
+            )
+            if member is None:
+                self.fail(s.field, f"structure has no member {s.field.name}")
+            _, member_type, offset = member
+            if "const" in structure.qualifiers:
+                member_type = member_type.qualified("const")
+            return self.node(
+                s, "member", member_type, [address], offset, lvalue=True
+            )
         if isinstance(s, c.UnaryOp):
             if s.op == "sizeof":
                 t = (
@@ -427,7 +538,11 @@ class Frontend:
         self.fail(s, f"unsupported expression: {type(s).__name__}")
 
     def modifiable(self, s, n):
-        if not n.lvalue or n.type.kind in ("array", "function", "void"):
+        if (
+            not n.lvalue
+            or n.type.kind in ("array", "function", "void")
+            or "const" in n.type.qualifiers
+        ):
             self.fail(s, "modifiable lvalue required")
 
     def resolve_array(self, s, t):
@@ -466,33 +581,92 @@ class Frontend:
                     for off, typ, n in self.initializer(s, t.base, e)
                 )
             return out
+        if t.kind == "struct":
+            if not isinstance(init, c.InitList):
+                self.fail(s, "structure requires a brace initializer")
+            if len(init.exprs) > len(t.record.members):
+                self.fail(s, "too many structure initializers")
+            out = []
+            for expression, (_, member_type, member_offset) in zip(
+                init.exprs, t.record.members
+            ):
+                out.extend(
+                    (member_offset + offset, type_, node)
+                    for offset, type_, node in self.initializer(
+                        s, member_type, expression
+                    )
+                )
+            return out
         if isinstance(init, c.InitList):
             if len(init.exprs) != 1:
                 self.fail(s, "scalar initializer requires one value")
             init = init.exprs[0]
         return [(0, t, self.convert(s, self.expr(init), t))]
 
+    def initialize_static_object(self, source, global_, init):
+        if init is None:
+            return
+        for offset, type_, node in self.initializer(
+            source, global_.symbol.type, init
+        ):
+            try:
+                value = self.static_value(node)
+            except (ZeroDivisionError, ValueError):
+                self.fail(source, "invalid static initializer")
+            if isinstance(value, tuple):
+                if type_.size != 4:
+                    self.fail(source, "address initializer needs a 32-bit destination")
+                global_.relocations.append((offset, *value))
+            else:
+                global_.data[offset : offset + type_.size] = (
+                    value & ((1 << (8 * type_.size)) - 1)
+                ).to_bytes(type_.size, "big")
+
     def statement(self, s):
         if s is None:
             return Node("block")
         if isinstance(s, c.Compound):
             self.scopes.append({})
+            self.typedefs.append({})
+            self.records.append({})
+            self.enum_tags.append({})
             body = [self.statement(x) for x in s.block_items or []]
+            self.enum_tags.pop()
+            self.records.pop()
+            self.typedefs.pop()
             self.scopes.pop()
             return self.node(s, "block", children=body)
         if isinstance(s, c.DeclList):
             return self.node(s, "block", children=[self.statement(x) for x in s.decls])
+        if isinstance(s, c.Typedef):
+            if s.name in self.typedefs[-1]:
+                self.fail(s, "duplicate typedef")
+            self.typedefs[-1][s.name] = self.typename(s)
+            return self.node(s, "block")
         if isinstance(s, c.Decl):
-            if s.storage:
+            if not s.name:
+                self.typename(s)
+                return self.node(s, "block")
+            if any(storage != "static" for storage in s.storage):
                 self.fail(
                     s,
-                    "local storage specifiers are unsupported (use file-scope globals)",
+                    "unsupported local storage specifier",
                 )
             t = self.resolve_array(s, self.typename(s))
             if t.kind in ("void", "function") or not t.size:
                 self.fail(s, "local variable requires a complete object type")
             if s.name in self.scopes[-1]:
                 self.fail(s, "duplicate local declaration")
+            if "static" in s.storage:
+                self.serial += 1
+                sym = Symbol(
+                    s.name, t, "global", f"__static_{self.serial}_{s.name}"
+                )
+                global_ = Global(sym, bytearray(t.size))
+                self.globals.append(global_)
+                self.initialize_static_object(s, global_, s.init)
+                self.scopes[-1][s.name] = sym
+                return self.node(s, "block")
             sym = self.new(s.name, t, "local")
             self.scopes[-1][s.name] = sym
             self.locals.append(sym)
@@ -521,6 +695,9 @@ class Frontend:
         if isinstance(s, (c.While, c.For, c.DoWhile)):
             self.loop_depth += 1
             self.scopes.append({})
+            self.typedefs.append({})
+            self.records.append({})
+            self.enum_tags.append({})
             if isinstance(s, c.For):
                 init = self.statement(s.init)
                 cond = (
@@ -540,6 +717,9 @@ class Frontend:
                         self.statement(s.stmt),
                     ],
                 )
+            self.enum_tags.pop()
+            self.records.pop()
+            self.typedefs.pop()
             self.scopes.pop()
             self.loop_depth -= 1
             return n
@@ -638,10 +818,13 @@ class Frontend:
         definitions = {}
         for item in tree.ext:
             if isinstance(item, c.Typedef):
-                self.typedefs[item.name] = self.typename(item)
+                self.typedefs[0][item.name] = self.typename(item)
                 continue
             d = item.decl if isinstance(item, c.FuncDef) else item
-            if not isinstance(d, c.Decl) or not d.name:
+            if isinstance(d, c.Decl) and not d.name:
+                self.typename(d)
+                continue
+            if not isinstance(d, c.Decl):
                 self.fail(d, "unsupported top-level declaration")
             t = (
                 self.resolve_array(d, self.typename(d))
@@ -673,25 +856,14 @@ class Frontend:
                 g = next((g for g in self.globals if g.symbol == sym), None)
                 if g is None:
                     self.fail(item, "extern initializers are unsupported")
-                for offset, t, n in self.initializer(item, sym.type, item.init):
-                    try:
-                        value = self.static_value(n)
-                    except (ZeroDivisionError, ValueError):
-                        self.fail(item, "invalid static initializer")
-                    if isinstance(value, tuple):
-                        if t.size != 4:
-                            self.fail(
-                                item, "address initializer needs a 32-bit destination"
-                            )
-                        g.relocations.append((offset, *value))
-                    else:
-                        g.data[offset : offset + t.size] = (
-                            value & ((1 << (8 * t.size)) - 1)
-                        ).to_bytes(t.size, "big")
+                self.initialize_static_object(item, g, item.init)
         for name, item in definitions.items():
             sym = self.scopes[0][name]
             self.locals = []
             self.scopes.append({})
+            self.typedefs.append({})
+            self.records.append({})
+            self.enum_tags.append({})
             params = []
             declarations = item.decl.type.args.params if item.decl.type.args else []
             for d, t in zip(declarations, sym.type.params):
@@ -709,6 +881,9 @@ class Frontend:
                 children=[self.statement(x) for x in item.body.block_items or []],
             )
             self.functions.append(Function(sym, params, self.locals, body))
+            self.enum_tags.pop()
+            self.records.pop()
+            self.typedefs.pop()
             self.scopes.pop()
         main = self.scopes[0].get("main")
         if not main or "main" not in definitions:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dynphony-c"
-version = "0.7.0"
+version = "0.8.0"
 description = "A small typed C compiler targeting the Dynphony ISA"
 requires-python = ">=3.10"
 dependencies = ["pycparser>=2.21,<3"]

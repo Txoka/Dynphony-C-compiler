@@ -95,6 +95,13 @@ class Lowerer:
             )
         if n.op == "deref":
             return self.expr(n.children[0])
+        if n.op == "member":
+            base = self.expr(n.children[0])
+            return (
+                self.binary("+", base, self.const(n.value), UINT)
+                if n.value
+                else base
+            )
         raise AssertionError(f"non-addressable typed node: {n.op}")
 
     def binary(self, op, a, b, t):
@@ -109,7 +116,7 @@ class Lowerer:
         op = n.op
         if op == "const":
             return self.const(n.value, n.type)
-        if op == "var" or op == "deref":
+        if op in ("var", "deref", "member"):
             return self.emit("load", (self.address(n),), n.type)
         if op == "address":
             return self.address(n.children[0])
@@ -228,7 +235,7 @@ class Lowerer:
             sym, entries = n.value
             if entries is not None:
                 addr = self.emit("local_addr", type_=pointer(sym.type), extra=sym.key)
-                if sym.type.kind == "array":
+                if sym.type.kind in ("array", "struct"):
                     self.emit("zero", (addr,), extra=sym.type.size, result=False)
                 for off, t, value in entries:
                     p = self.binary("+", addr, self.const(off), UINT) if off else addr

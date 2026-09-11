@@ -1,0 +1,42 @@
+{
+  "target": {
+    "ram_size": 16777216,
+    "persistent_size": 0,
+    "load_address": 0,
+    "pic": false
+  },
+  "image_size": 1467,
+  "symbols": {
+    "_start": 0,
+    "_start.inline2.memory_copy.L1": 252,
+    "_start.inline2.memory_copy.L2": 289,
+    "_start.inline2.memory_copy.L4": 399,
+    "_start.inline3.memory_set.L1": 416,
+    "_start.inline3.memory_set.L2": 453,
+    "_start.inline3.memory_set.L4": 515,
+    "_start.inline1.main.L5": 569,
+    "_start.inline1.main.L4": 595,
+    "@backend.2": 676,
+    "@backend.3": 688,
+    "@backend.4": 740,
+    "@backend.5": 752,
+    "_start.inline1.main.L6": 765,
+    "_start.inline1.main.L2": 805,
+    "_start.inline1.main.L1": 831,
+    "@backend.6": 908,
+    "@backend.7": 920,
+    "@backend.8": 972,
+    "@backend.9": 984,
+    "_start.inline1.main.L3": 1005,
+    "_halt": 1050,
+    "arena_alloc": 1054,
+    "arena_alloc.L1": 1301,
+    "arena_alloc.L2": 1320,
+    "@backend.10": 1419
+  },
+  "frame_sizes": {
+    "_start": 172,
+    "arena_alloc": 64
+  },
+  "symbol_addressing": "absolute addresses"
+}

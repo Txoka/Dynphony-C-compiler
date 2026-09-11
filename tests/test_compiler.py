@@ -176,8 +176,10 @@ class ExecutionTests(unittest.TestCase):
     def test_source_diagnostics_for_unsupported_semantics(self):
         for source in [
             "int f(int x){int x=3;return x;} int main(void){return f(1);}",
-            "const int x=3; int main(void){return x;}",
             "int main(void){volatile int x=3;return x;}",
+            "const int x=3; int main(void){x=4;return x;}",
+            "int main(void){const int x=3; const int *p=&x; *p=4; return x;}",
+            "const int x=3; int main(void){int *p=&x;return *p;}",
         ]:
             with self.subTest(source=source), self.assertRaises(CompileError):
                 compile_source(source)
@@ -191,6 +193,26 @@ class ExecutionTests(unittest.TestCase):
             0x10100,
         )
 
+    def test_stack_passed_arguments(self):
+        source = """
+            int sum8(int a,int b,int c,int d,int e,int f,int g,int h) {
+                return a+b+c+d+e+f+g+h;
+            }
+            int (*call8)(int,int,int,int,int,int,int,int)=sum8;
+            int main(void) {
+                return call8(1,2,3,4,5,6,7,8)
+                     + call8(1,1,1,1,1,1,1,1);
+            }
+        """
+        result, machine = run(source, 44)
+        self.assertIn("sum8", result.image.symbols)
+        self.assertEqual(machine.regs[14], 0)
+        run(
+            "int f(int a,int b,int c,int d,int e,int f,signed char g,unsigned short h)"
+            "{return g+h;} int main(void){return f(0,0,0,0,0,0,255,65535);}",
+            65534,
+        )
+
     def test_scope(self):
         run(
             "int x=2; int main(void){int x=3; {int x=4; x++;} for(int x=0;x<3;x++){} return x;}",
@@ -199,6 +221,56 @@ class ExecutionTests(unittest.TestCase):
         run(
             "typedef unsigned short word; word x=65535; int main(void){return x+1;}",
             65536,
+        )
+
+    def test_structs_enums_const_and_local_typedefs(self):
+        run(
+            """struct Pair { char a; int b; short c; };
+            int main(void){struct Pair p; struct Pair *q=&p;
+            p.a=2; q->b=30; p.c=4;
+            return p.a+p.b+p.c+sizeof(struct Pair);}""",
+            48,
+        )
+        run(
+            """struct Node { int value; struct Node *next; };
+            int main(void){struct Node n[2]; n[0].value=7; n[0].next=&n[1];
+            n[0].next->value=9;
+            return n[0].value+n[1].value+sizeof(struct Node);}""",
+            24,
+        )
+        run(
+            """struct Inner { short x; char y; };
+            struct Outer { char tag; struct Inner inner; int values[2]; };
+            struct Outer data={'A',{2,3},{4,5}};
+            int main(void){return data.tag+data.inner.x+data.inner.y+
+            data.values[0]+data.values[1]+sizeof(data);}""",
+            95,
+        )
+        run(
+            """enum Mode { MODE_A=3, MODE_B, MODE_C=MODE_B+5 };
+            int main(void){enum Mode mode=MODE_C; return mode+sizeof(enum Mode);}""",
+            13,
+        )
+        run(
+            "typedef int word; int main(void){typedef unsigned char word; "
+            "const word value=255; return value+sizeof(word);}",
+            256,
+        )
+        run(
+            "const int global=12; int main(void){const int local=30; "
+            "const int *p=&local; return global+*p;}",
+            42,
+        )
+        run(
+            "struct Item {int value;}; int main(void){struct Item outer; "
+            "{struct Item {char value;}; struct Item inner; inner.value=3; "
+            "if(sizeof(inner)!=1)return 0;} outer.value=4; return sizeof(outer);}",
+            4,
+        )
+        run(
+            "int next(void){static int value=10; return ++value;} "
+            "int main(void){int a=next(); int b=next(); return a*100+b;}",
+            1112,
         )
 
     def test_void(self):
@@ -300,17 +372,11 @@ class DiagnosticTests(unittest.TestCase):
             ("int main(void){break;return 0;}", "outside loop"),
             ("int f(int x){return x;} int main(void){return f();}", "arguments"),
             ("int main(void){int n=2; int a[n];return 0;}", "constant"),
-            ("int main(void){static int x;return 0;}", "storage"),
-            (
-                "int f(int a,int b,int c,int d,int e,int f,int g){return a;} int main(void){return 0;}",
-                "six",
-            ),
             ("int main(void){int *p=2;return 0;}", "convert"),
             ("int main(void){int a[1]={1,2};return 0;}", "too many"),
             ("void main(void){}", "entry point"),
             ("int main(void){return __dyn_mul(1,2);}", "reserved"),
             ("int main(void){return 1.25;}", "floating"),
-            ("struct X{int a;}; int main(void){return 0;}", "unsupported"),
             ("int main(void){switch(1){case 1:return 1;}return 0;}", "unsupported"),
         ]
         for source, message in cases:
@@ -372,6 +438,12 @@ class EncodingTests(unittest.TestCase):
         self.assertNotIn("main", result.image.symbols)
         self.assertEqual(result.image.frames["_start"], 4)
         self.assertLessEqual(len(result.image.binary), 348)
+
+    def test_arena_allocator_example(self):
+        source = (ROOT / "examples/arena_allocator.c").read_text()
+        result = compile_source(source)
+        machine = Machine(result.image.binary, 1 << 16)
+        self.assertEqual(machine.run(result.image.symbols["_halt"]), 1)
 
     def test_scalar_locals_fold_to_constant_return(self):
         result = compile_source(

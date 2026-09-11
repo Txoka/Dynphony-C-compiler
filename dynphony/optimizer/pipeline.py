@@ -539,7 +539,8 @@ def eliminate_tail_calls(function):
         if instruction.op == "call":
             following = continuation(index + 1)
             if (
-                following is not None
+                len(instruction.args) <= 7
+                and following is not None
                 and following.op == "return"
                 and (
                     (not following.args and instruction.type.kind == "void")

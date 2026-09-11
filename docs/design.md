@@ -4,7 +4,7 @@
 
 `parse` uses pycparser's lexer/parser without running a preprocessor. A lexical comment pass preserves line breaks and string/character literals. Runtime helpers are parsed separately so diagnostics retain the user's filename and line numbers.
 
-`Frontend.build` collects function/global symbols, then checks global initializers and function bodies. Its result consists solely of project-owned `Type`, `Symbol`, `Node`, `Global`, and `Function` records. Implicit integer conversions and array/function decay are explicit typed nodes. Scalar condition checks and lvalue checks happen before IR lowering. Unsupported constructs fail here instead of reaching machine emission.
+`Frontend.build` collects function/global symbols, structure and enum tags, then checks global initializers and function bodies. Its result consists solely of project-owned `Type`, `Record`, `Symbol`, `Node`, `Global`, and `Function` records. Structure records are shared objects so an incomplete `struct Node` can be referenced through a pointer while its members are being completed. Member offsets, natural alignment, const qualification, implicit integer conversions, and array/function decay are explicit before IR lowering. Unsupported constructs fail here instead of reaching machine emission.
 
 `lower` converts the typed tree to a function-local list of instructions. Values are numbered, local/global addresses are explicit, loads/stores have widths, and labels/branches represent control flow. Short-circuit operators and conditional expressions introduce branches and a shared result slot. Address computation for compound assignment and increment happens exactly once. The backend receives no parser AST.
 
@@ -26,7 +26,7 @@ higher addresses
 lower addresses
 ```
 
-Constants and addresses are rematerialized. The local allocator keeps values for a straight-line leaf function in caller-saved registers and coalesces promoted parameters with their incoming `r1`–`r6` locations. Functions with control flow assign up to four frequently used values to `r8`–`r11` and save only the registers selected for that function. Other live values are backed by memory, so nested calls and loop backedges remain safe. Parameters that are assigned or whose addresses escape remain addressable stack objects. Calls compute the callee address after loading argument registers. The register call sequence is exactly the supplied pseudo-instruction: `counter flags`, add 16, push flags, and jump to the target register. A frame-using function restores `sp` and `r12` before the ISA's `ret` expansion. A frame-free function goes directly to `ret`.
+Constants and addresses are rematerialized. The local allocator keeps values for a straight-line leaf function in caller-saved registers and coalesces promoted parameters with their incoming `r1`–`r6` locations. Functions with control flow assign up to four frequently used values to `r8`–`r11` and save only the registers selected for that function. Other live values are backed by memory, so nested calls and loop backedges remain safe. Parameters that are assigned or whose addresses escape remain addressable stack objects. Arguments seven onward are pushed right-to-left; after the callee saves its frame pointer and selected callee-saved registers, it loads those arguments from positive frame-pointer offsets. The caller discards them after return. Indirect call targets are preserved before argument placement. The register call sequence is exactly the supplied pseudo-instruction: `counter flags`, add 16, push flags, and jump to the target register. A frame-using function restores `sp` and `r12` before the ISA's `ret` expansion. A frame-free function goes directly to `ret`.
 
 The backend uses `r1` and `r2` for arithmetic and `r7` for addresses. Allocated values may reside in `r8`–`r11`; `r12` is the frame pointer and `r13` holds the PIC base. Every modified callee-saved register is preserved. Materializing a jump address never modifies flags, so nothing between a comparison and its consuming conditional jump invalidates that comparison.
 
@@ -41,7 +41,7 @@ are suppressed when an addressable local could be passed into the callee.
 
 Narrow loads zero-extend in hardware. The backend uses left shift followed by arithmetic right shift to sign-extend signed narrow types. The same conversion sequence handles narrowing assignment/casts. Narrow integer operands promote to signed 32-bit int; unsigned 32-bit operands drive unsigned common arithmetic. Right shifts use the promoted left operand's signedness. Pointer arithmetic scales by the pointed-to object size, and pointer difference divides the byte difference by that size.
 
-The initial implementation models `long` and `int` using the same 32-bit representation and conversion behavior. A future standards-focused frontend should preserve the distinction and C rank explicitly, especially before adding 64-bit types. Qualified types should likewise be modeled explicitly before accepting them.
+The initial implementation models `long` and `int` using the same 32-bit representation and conversion behavior. Structures use natural member alignment capped at four bytes and retain tail padding. Enums currently use signed 32-bit `int`. `const` is represented on types and prevents writes or qualifier-discarding pointer conversions; `volatile` and `restrict` remain unsupported. A future standards-focused frontend should preserve integer rank explicitly before adding wider types.
 
 Static constant evaluation operates on the typed AST and applies width/sign normalization at each conversion and arithmetic operation. Static addresses remain `(symbol, byte_addend)` records until layout. PIC initialization in `_start` emits address stores before the optimized program body, deriving both destination and target from `r13`. No relocation metadata is required in the raw binary.
 
@@ -70,8 +70,8 @@ The unittest suite groups many execution cases and deterministic randomized arit
 - ISA encodings checked against both explicit golden bytes and the attached text.
 - Integer promotion, narrowing, sign extension, mixed signedness and comparisons.
 - Both branches of short-circuit and conditional evaluation, including side effects.
-- Loop control, nested scopes, recursion, nested calls, all six argument registers and callee-saved state.
-- Array initialization, multidimensional indexing, pointer chains, scaled pointer differences and indirect calls.
+- Loop control, nested scopes, recursion, nested calls, register and stack-passed scalar arguments, and callee-saved state.
+- Array/structure initialization, padded and self-referential structures, member access, enums, const pointers, local typedefs, static locals, multidimensional indexing, pointer chains, scaled pointer differences and indirect calls.
 - Big-endian byte inspection, unaligned word access and modulo RAM access.
 - Fixed addresses beyond 64 KiB, far static data, PIC at multiple aligned/unaligned addresses, pointer relocations and PIC reentry.
 - Software arithmetic with boundary operands, negative quotient/remainder cases, and seeded randomized operands.

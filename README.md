@@ -43,12 +43,15 @@ python -m unittest discover -s tests -v
 
 - Plain `char` is unsigned; explicit signed/unsigned `char`, `short`, `int`, and `long` are supported.
 - Pointers, pointers to pointers, function pointers, explicit integer/pointer casts, and `void` functions/pointers.
-- Local variables and lexical scopes; file-scope globals, `static` globals/functions, external declarations resolved within this translation unit, and file-scope typedefs.
+- Local variables and lexical scopes; file-scope globals, `static` globals/functions, static locals, external declarations resolved within this translation unit, and file/block-scope typedefs.
+- Named and anonymous structures, self-referential structure pointers, natural member layout, `.`/`->`, nested structure/array members, and brace initialization for structure objects.
+- Enumerations with implicit or integer-constant enumerator values.
+- `const` objects and pointers with qualifier-preserving conversions and modification diagnostics.
 - Decimal/octal/hex integer literals, character literals, ordinary single-byte strings, and comments.
 - Arithmetic `+ - * / %`, bitwise operations, shifts, comparisons, logical operators, prefix/postfix increment/decrement, assignment and compound assignment.
 - Short-circuit `&&`/`||`, conditional `?:`, comma expressions, and unevaluated `sizeof`.
 - `if`/`else`, `while`, `for`, `do`/`while`, `break`, `continue`.
-- Functions, direct/indirect calls, recursion, and returns; up to six scalar arguments.
+- Functions, direct/indirect calls, recursion, and returns. The first six scalar arguments use registers; later scalar arguments are passed on the stack.
 - Fixed-size and multidimensional arrays, inferred outer array bounds, brace/string initializers, array indexing/decay, pointer scaling/difference, dereference, and address-of.
 - Zero-filled globals, partially initialized arrays, integer constant initializers, and symbolic pointer initializers such as `int *p = &a[2]`.
 - Software multiplication and signed/unsigned division/remainder. Division is bounded to 32 iterations, including for large unsigned divisors.
@@ -68,7 +71,7 @@ Entry must be `int main(void)` or `int main()`. In this version, an empty parame
 | `char` / `short` / `int` / `long` | 1 / 2 / 4 / 4 bytes |
 | Pointers | 4 bytes |
 | Object alignment | Natural, capped at 4 bytes |
-| Arguments / return | `r1`–`r6` / `r1` |
+| Arguments / return | first six in `r1`–`r6`, later arguments on stack / `r1` |
 | Caller-saved | `r1`–`r7`, `flags` |
 | Callee-saved | `r8`–`r13` |
 | Stack | `sp = 0` at startup, downward, 4-byte aligned |
@@ -125,10 +128,10 @@ reserved and cannot be used for user-defined functions.
 This is a C subset compiler, not a conforming full C implementation. Unsupported constructs produce diagnostics where encountered:
 
 - No preprocessor (`#include`, `#define`, etc.), headers, standard library, heap, or separate linking.
-- No 64-bit `long long`, `_Bool`, floating point, structs/unions/enums, bit-fields, or variadic functions.
-- No qualified types (`const`, `volatile`, `restrict`), local `static`/`extern`, local typedefs, variable-length arrays, designated initializers, `switch`, `goto`, or inline assembly.
-- No stack-passed seventh and later arguments, aggregate arguments/returns, or old-style function definitions.
-- Aggregate initializers require nested braces for nested arrays; brace elision is not implemented. Array bounds must be compile-time constants. Multiple tentative global definitions are rejected rather than merged.
+- No 64-bit `long long`, `_Bool`, floating point, unions, bit-fields, or variadic functions.
+- No `volatile` or `restrict`, local `extern`, variable-length arrays, designated initializers, `switch`, `goto`, or inline assembly.
+- No aggregate arguments/returns or old-style function definitions.
+- Structure assignment is not implemented. Aggregate initializers require nested braces; brace elision and designated initialization are not implemented. Array bounds must be compile-time constants. Multiple tentative global definitions are rejected rather than merged.
 - Decimal literals above `2147483647` need an explicit `U` suffix because unsuffixed decimal values would require an unsupported 64-bit C type. Write the minimum signed integer as `(-2147483647 - 1)` or cast `0x80000000u`.
 - Strings use ordinary single-byte characters and escapes; no wide/Unicode literal types. String literals reside in writable unified memory, but modifying one is still C undefined behavior.
 - The optimizer promotes non-escaping scalar locals, propagates copies and constants, folds scalar expressions, simplifies control flow, rematerializes constants and addresses, selects immediate ALU forms, removes unused pure values and functions, strength-reduces power-of-two arithmetic, and includes only reachable arithmetic helpers.
@@ -195,6 +198,11 @@ the halt jump; no multiplication helper or standalone `main` remains.
 `examples/interprocedural_constant_folding.c` computes the same value through a
 sole-called `foo(int)`. Function relocation exposes its argument and locals to
 the global fixed point, producing the identical 8-byte result.
+
+`examples/arena_allocator.c` supplies bytewise memory set/copy functions and an
+aligned bump allocator built from `struct Arena`. It demonstrates structures,
+`const` pointers, `sizeof`, `void *` conversions, and allocation without compiler
+intrinsics or an operating system.
 
 The API exposes each pipeline stage:
 

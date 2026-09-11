@@ -679,6 +679,15 @@ class Backend:
                 if i.dst in self.rematerialized:
                     continue
                 self.slot_address(self.locals[i.extra], 1)
+            elif op == "stack_mark":
+                a.emit(isa.mov(1, 14))
+            elif op == "stack_alloc":
+                self.get(i.args[0], 1)
+                a.emit(isa.alu("sub", 14, 14, 1))
+                a.emit(isa.mov(1, 14))
+            elif op == "stack_restore":
+                self.get(i.args[0], 14)
+                continue
             elif op in ("cast", "copy"):
                 self.get(i.args[0], 1)
                 if op == "cast":

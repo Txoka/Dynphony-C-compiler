@@ -839,6 +839,7 @@ def remove_dead_values(function):
             "tailcall",
             "direct_tailcall",
             "intrinsic",
+            "stack_alloc",
         ):
             keep.add(index)
             required.update(instruction.args)

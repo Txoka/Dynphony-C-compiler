@@ -47,8 +47,8 @@ signed-overflow undefined behavior.
 - Address-of, dereference, array indexing, pointer arithmetic, and pointer
   difference.
 - Conditional `?:` and comma expressions.
-- Unevaluated `sizeof expression` and `sizeof(type)`. There is no variable-length
-  array case, so every supported `sizeof` is a compile-time constant.
+- Unevaluated `sizeof expression` and `sizeof(type)` for fixed-size types. `sizeof`
+  of a VLA is not yet supported because it is a runtime expression in C.
 
 Multiplication, division, and remainder use software helpers only when surviving
 optimized code needs them. Constant expressions and suitable power-of-two
@@ -65,6 +65,10 @@ operations do not pull those helpers into the image.
 - File-scope and block-scope `typedef` declarations, including normal shadowing.
 - Fixed-size arrays, multidimensional arrays, inferred outer bounds, partial
   brace initialization, and character-array initialization from strings.
+- Runtime-sized local arrays (VLAs) with an outermost variable bound, such as
+  `char bytes[count]` and `int matrix[rows][3]`. Storage is reserved when the
+  declaration executes and released when its block, loop, or function scope
+  exits, including `break`, `continue`, and `return` paths.
 - Symbolic static pointer initializers such as `int *p = &values[2]`.
 
 ### Structures
@@ -102,7 +106,7 @@ an empty parameter list means no parameters. Falling out of `main` returns zero.
 | Qualifiers/specifiers | `volatile`, `restrict`, `_Atomic`, thread-local storage, and local `extern` |
 | Aggregate operations | Structure assignment and structures passed to or returned from functions by value |
 | Initializers | Designated initializers and general brace elision |
-| Arrays | Variable-length arrays and flexible array members |
+| Arrays | Flexible array members, VLA `sizeof`, and inner variable bounds such as `int matrix[3][columns]` |
 | Control flow | `switch`/`case`/`default`, `goto`, and labels used by `goto` |
 | Functions | Variadic functions, old-style definitions, and aggregate calling conventions |
 | Runtime library | Standard headers and library functions, including bundled `malloc`, `free`, `memcpy`, and `memset` |
@@ -123,12 +127,12 @@ pointer decay. The compiler also supports using a pointer as dynamic storage
 once application code obtains that pointer; `examples/arena_allocator.c` shows
 an aligned bump allocator built entirely in the supported subset.
 
-Two different C facilities remain absent:
+Two related facilities remain absent or incomplete:
 
-- A variable-length array such as `char text[count]` needs dynamic stack-space
-  reservation and cleanup on every return, `break`, and control-flow edge. The
-  current frame layout is deliberately fixed before backend lowering, so it
-  rejects such bounds instead of emitting an unsafe frame.
+- VLAs with an inner runtime bound, such as `int table[rows][columns]`, need
+  runtime stride metadata for pointer arithmetic. The current implementation
+  supports the common outer-bound form (`int table[rows][3]`) and keeps that
+  metadata-free design for now.
 - `malloc`/`free` need a chosen heap region, allocation policy, failure rule,
   and a stable runtime API. There is no operating system to supply those. A
   bundled reference runtime can provide this without changing the C frontend;

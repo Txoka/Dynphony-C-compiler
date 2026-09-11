@@ -132,7 +132,7 @@ This is a C subset compiler, not a conforming full C implementation. Unsupported
 
 - No preprocessor (`#include`, `#define`, etc.), headers, standard library, heap, or separate linking.
 - No 64-bit `long long`, floating point, unions, bit-fields, or variadic functions.
-- No `volatile` or `restrict`, local `extern`, variable-length arrays, designated initializers, `switch`, `goto`, or inline assembly.
+- No `volatile` or `restrict`, local `extern`, designated initializers, `switch`, `goto`, or inline assembly. VLAs support an outermost runtime bound; VLA `sizeof` and inner runtime bounds remain incomplete.
 - No aggregate arguments/returns or old-style function definitions.
 - Structure assignment is not implemented. Aggregate initializers require nested braces; brace elision and designated initialization are not implemented. Array bounds must be compile-time constants. Multiple tentative global definitions are rejected rather than merged.
 - Decimal literals above `2147483647` need an explicit `U` suffix because unsuffixed decimal values would require an unsupported 64-bit C type. Write the minimum signed integer as `(-2147483647 - 1)` or cast `0x80000000u`.

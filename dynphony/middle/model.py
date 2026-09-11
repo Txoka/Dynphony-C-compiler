@@ -54,7 +54,7 @@ class Type:
 
     @property
     def align(self):
-        if self.kind == "array":
+        if self.kind in ("array", "vla"):
             return self.base.align
         if self.kind == "struct":
             return self.record.alignment
@@ -67,7 +67,7 @@ class Type:
     def decay(self):
         return (
             pointer(self.base)
-            if self.kind == "array"
+            if self.kind in ("array", "vla")
             else pointer(self) if self.kind == "function" else self
         )
 
@@ -103,6 +103,8 @@ class Type:
             return f"{prefix}{self.base}*"
         if self.kind == "array":
             return f"{prefix}{self.base}[{self.count}]"
+        if self.kind == "vla":
+            return f"{prefix}{self.base}[*]"
         if self.kind == "function":
             return f'{prefix}{self.base}({", ".join(map(str, self.params))})'
         if self.kind == "struct":
@@ -127,6 +129,11 @@ def pointer(base):
 
 def array(base, count):
     return Type("array", base.size * count, False, base, count)
+
+
+def vla(base):
+    """A runtime-sized array whose element size is fixed at compile time."""
+    return Type("vla", 0, False, base)
 
 
 def common(a, b):

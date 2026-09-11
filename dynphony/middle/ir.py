@@ -48,6 +48,8 @@ class Lowerer:
         self.f = FunctionIR(function.symbol.key, function.params, function.locals)
         self.label_id = 0
         self.loops = []
+        self.scopes = []
+        self.dynamic_locals = {}
 
     def value(self):
         v = self.f.values
@@ -87,6 +89,8 @@ class Lowerer:
     def address(self, n):
         if n.op == "var":
             sym = n.value
+            if sym.key in self.dynamic_locals:
+                return self.dynamic_locals[sym.key]
             return self.emit(
                 (
                     "global_addr"
@@ -242,12 +246,39 @@ class Lowerer:
     def statement(self, n):
         op = n.op
         if op == "block":
+            dynamic = any(
+                child.op == "declare" and child.value[0].type.kind == "vla"
+                for child in n.children
+            )
+            marker = self.emit("stack_mark", type_=UINT) if dynamic else None
+            self.scopes.append(marker)
             for child in n.children:
                 self.statement(child)
+            self.scopes.pop()
+            if marker is not None:
+                self.emit("stack_restore", (marker,), result=False)
         elif op == "expression":
             self.expr(n.children[0])
         elif op == "declare":
-            sym, entries = n.value
+            sym, entries, bound = n.value
+            if sym.type.kind == "vla":
+                bytes_ = self.expr(bound)
+                if sym.type.base.size != 1:
+                    bytes_ = self.binary(
+                        "*", bytes_, self.const(sym.type.base.size, UINT), UINT
+                    )
+                align = sym.type.base.align
+                if align > 1:
+                    bytes_ = self.binary(
+                        "+", bytes_, self.const(align - 1, UINT), UINT
+                    )
+                    bytes_ = self.binary(
+                        "&", bytes_, self.const(-(align), UINT), UINT
+                    )
+                self.dynamic_locals[sym.key] = self.emit(
+                    "stack_alloc", (bytes_,), pointer(sym.type.base)
+                )
+                return
             if entries is not None:
                 addr = self.emit("local_addr", type_=pointer(sym.type), extra=sym.key)
                 if sym.type.kind in ("array", "struct"):
@@ -256,6 +287,9 @@ class Lowerer:
                     p = self.binary("+", addr, self.const(off), UINT) if off else addr
                     self.store(p, self.expr(value), t)
         elif op == "return":
+            for marker in reversed(self.scopes):
+                if marker is not None:
+                    self.emit("stack_restore", (marker,), result=False)
             self.emit(
                 "return",
                 (self.expr(n.children[0]),) if n.children else (),
@@ -277,13 +311,17 @@ class Lowerer:
                 self.label(),
                 self.label(),
             )
+            loop_marker = None
+            if op == "for" and n.children[0].op == "declare" and n.children[0].value[0].type.kind == "vla":
+                loop_marker = self.emit("stack_mark", type_=UINT)
+                self.scopes.append(loop_marker)
             if op == "for":
                 self.statement(n.children[0])
                 cond = n.children[1]
                 stmt = n.children[3]
             else:
                 cond, stmt = n.children
-            self.loops.append((end, step))
+            self.loops.append((end, step, len(self.scopes) - (1 if loop_marker is not None else 0)))
             if op == "do":
                 self.jump(body)
             self.mark(test)
@@ -296,10 +334,21 @@ class Lowerer:
             self.jump(test)
             self.mark(end)
             self.loops.pop()
+            if loop_marker is not None:
+                self.scopes.pop()
+                self.emit("stack_restore", (loop_marker,), result=False)
         elif op == "break":
-            self.jump(self.loops[-1][0])
+            end, _, scope_start = self.loops[-1]
+            for marker in reversed(self.scopes[scope_start:]):
+                if marker is not None:
+                    self.emit("stack_restore", (marker,), result=False)
+            self.jump(end)
         elif op == "continue":
-            self.jump(self.loops[-1][1])
+            _, step, scope_start = self.loops[-1]
+            for marker in reversed(self.scopes[scope_start + 1 :]):
+                if marker is not None:
+                    self.emit("stack_restore", (marker,), result=False)
+            self.jump(step)
         else:
             raise AssertionError(f"unhandled typed statement {op}")
 

@@ -14,6 +14,7 @@ from ...middle.model import (
     VOID,
     pointer,
     array,
+    vla,
     common,
     Symbol,
     Node,
@@ -183,8 +184,20 @@ class Frontend:
             return self.apply_qualifiers(t, pointer(self.typename(t.type)), t.quals)
         if isinstance(t, c.ArrayDecl):
             base = self.typename(t.type)
-            count = self.const_int(t.dim) if t.dim else 0
-            if count < 0 or base.size == 0:
+            if base.size == 0:
+                self.fail(t, "invalid array type")
+            if t.dim is None:
+                return array(base, 0)
+            try:
+                count = self.const_int(t.dim)
+            except CompileError:
+                # A VLA is valid only when each element has a fixed stride.
+                # This deliberately defers inner runtime dimensions, whose
+                # pointer arithmetic needs runtime stride metadata.
+                if base.kind == "vla":
+                    self.fail(t, "only the outermost array bound may be variable")
+                return vla(base)
+            if count < 0:
                 self.fail(t, "invalid array type")
             return array(base, count)
         if isinstance(t, c.FuncDecl):
@@ -291,7 +304,7 @@ class Frontend:
         return Node("cast", t, [n], location=n.location)
 
     def value(self, n):
-        if n.type.kind in ("array", "function"):
+        if n.type.kind in ("array", "vla", "function"):
             return Node("address", n.type.decay(), [n], location=n.location)
         return n
 
@@ -523,7 +536,7 @@ class Frontend:
     def modifiable(self, s, n):
         if (
             not n.lvalue
-            or n.type.kind in ("array", "function", "void")
+            or n.type.kind in ("array", "vla", "function", "void")
             or "const" in n.type.qualifiers
         ):
             self.fail(s, "modifiable lvalue required")
@@ -537,6 +550,16 @@ class Frontend:
             else:
                 self.fail(s, "incomplete arrays need an initializer")
         return t
+
+    def vla_bound(self, source):
+        """Type-check the outer VLA bound; it is evaluated at declaration time."""
+        declarator = source.type
+        if not isinstance(declarator, c.ArrayDecl) or declarator.dim is None:
+            raise AssertionError("VLA declaration without an outer array bound")
+        bound = self.scalar(declarator.dim, self.expr(declarator.dim))
+        if not bound.type.integer:
+            self.fail(declarator.dim, "variable array bound requires an integer")
+        return self.cast(bound, UINT)
 
     def initializer(self, s, t, init):
         """Flatten aggregate initializers to typed scalar entries at byte offsets."""
@@ -636,7 +659,7 @@ class Frontend:
                     "unsupported local storage specifier",
                 )
             t = self.resolve_array(s, self.typename(s))
-            if t.kind in ("void", "function") or not t.size:
+            if t.kind in ("void", "function") or (not t.size and t.kind != "vla"):
                 self.fail(s, "local variable requires a complete object type")
             if s.name in self.scopes[-1]:
                 self.fail(s, "duplicate local declaration")
@@ -653,8 +676,11 @@ class Frontend:
             sym = self.new(s.name, t, "local")
             self.scopes[-1][s.name] = sym
             self.locals.append(sym)
+            if t.kind == "vla" and s.init is not None:
+                self.fail(s, "variable-length arrays cannot have initializers")
             entries = self.initializer(s, t, s.init) if s.init else None
-            return self.node(s, "declare", value=(sym, entries))
+            bound = self.vla_bound(s) if t.kind == "vla" else None
+            return self.node(s, "declare", value=(sym, entries, bound))
         if isinstance(s, c.Return):
             if self.return_type == VOID:
                 if s.expr:
@@ -734,6 +760,8 @@ class Frontend:
         Apply target-width conversions at every operation, not just at the final
         data store. This matters for (signed char)255 and unsigned wraparound.
         """
+        if n.op == "bool_cast":
+            return int(bool(self.static_value(n.children[0])))
         if n.op == "cast":
             return self.normalize_constant(self.static_value(n.children[0]), n.type)
         if n.op == "const":

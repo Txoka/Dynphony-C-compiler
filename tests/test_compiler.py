@@ -140,6 +140,7 @@ class ExecutionTests(unittest.TestCase):
         run("int main(void){int a=0; return sizeof(a++)+a;}", 4)
 
     def test_bool_type_and_char_arrays(self):
+        run("bool global_flag = 9; int main(void) { return global_flag; }", 1)
         run(
             """_Bool nonzero(unsigned int value) { return value; }
             int main(void) {
@@ -150,6 +151,45 @@ class ExecutionTests(unittest.TestCase):
                     + flags[2] + bytes[1];
             }""",
             110,
+        )
+
+    def test_variable_length_arrays(self):
+        run(
+            """int square_last(int n) {
+                int values[n];
+                values[n - 1] = n * n;
+                return values[n - 1];
+            }
+            int main(void) { return square_last(input()); }""",
+            49,
+            inputs=(7,),
+        )
+        run(
+            """int main(void) {
+                int n = input();
+                int total = 0;
+                for (int i = 0; i < 4; i++) {
+                    char row[n];
+                    row[0] = i;
+                    row[n - 1] = 10 + i;
+                    if (i == 1) continue;
+                    total += row[0] + row[n - 1];
+                }
+                return total;
+            }""",
+            40,
+            inputs=(3,),
+        )
+        run(
+            """int first_or_zero(int n) {
+                int values[n];
+                if (n == 1) return 7;
+                values[0] = 9;
+                return values[0];
+            }
+            int main(void) { return first_or_zero(input()); }""",
+            7,
+            inputs=(1,),
         )
 
     def test_big_endian_and_unaligned(self):
@@ -387,7 +427,6 @@ class DiagnosticTests(unittest.TestCase):
             ("int main(void){int a[2]; a=0;return 0;}", "lvalue"),
             ("int main(void){break;return 0;}", "outside loop"),
             ("int f(int x){return x;} int main(void){return f();}", "arguments"),
-            ("int main(void){int n=2; int a[n];return 0;}", "constant"),
             ("int main(void){int *p=2;return 0;}", "convert"),
             ("int main(void){int a[1]={1,2};return 0;}", "too many"),
             ("void main(void){}", "entry point"),

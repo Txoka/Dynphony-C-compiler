@@ -694,6 +694,24 @@ class Backend:
                 self.get(i.args[0], 1)
                 a.emit(isa.screen(2, 1))
                 continue
+            elif op == "clear_text_framebuffer":
+                if self.target.include_framebuffer:
+                    continue
+                self.get(i.args[0], 1)
+                # The 3,840-byte framebuffer has 960 words.  Clear eight
+                # words per trip: stores have no offset form, so advancing
+                # the address after each one is still required, but the
+                # counter, compare, and branch are amortized over eight.
+                a.emit(isa.cheap_constant(2, 120))
+                loop = self.unique()
+                a.label(loop)
+                for _ in range(8):
+                    a.emit(isa.store(4, 1, 0))
+                    a.emit(isa.alu("add", 1, 1, 4, True))
+                a.emit(isa.alu("sub", 2, 2, 1, True))
+                a.emit(isa.alu("cmp", 15, 2, 0))
+                a.branch("jne", loop)
+                continue
             elif op in ("cast", "copy"):
                 self.get(i.args[0], 1)
                 if op == "cast":
@@ -909,17 +927,17 @@ class Backend:
         for f in self.module.functions:
             self.function(f)
         for g in self.module.globals:
-            if g.reserved:
+            if g.reserved and not self.target.include_framebuffer:
                 continue
             a.emit(bytes(align_up(len(a.code), g.symbol.type.align) - len(a.code)))
             a.label(g.symbol.key)
-            a.emit(g.data)
+            a.emit(g.data or bytes(g.reserved))
         # Relax branches/calls before assigning addresses to reservations that
         # live immediately after the serialized image.
         a.relax_controls()
         virtual_end = len(a.code)
         for g in self.module.globals:
-            if not g.reserved:
+            if not g.reserved or self.target.include_framebuffer:
                 continue
             virtual_end = align_up(virtual_end, g.symbol.type.align)
             a.labels[g.symbol.key] = virtual_end

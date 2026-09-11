@@ -24,6 +24,11 @@ def main(argv=None):
     p.add_argument("--load-address", type=number, default=0)
     p.add_argument("--ram-size", type=number, default=16 * 1024 * 1024)
     p.add_argument("--persistent-size", type=number, default=0)
+    p.add_argument(
+        "--include-framebuffer",
+        action="store_true",
+        help="serialize the text framebuffer as zero bytes instead of clearing reserved RAM at startup",
+    )
     p.add_argument("--emit-ir", type=Path)
     p.add_argument("--map", type=Path)
     p.add_argument(
@@ -36,7 +41,11 @@ def main(argv=None):
     args = p.parse_args(argv)
     try:
         target = Target(
-            args.ram_size, args.persistent_size, args.load_address, args.pic
+            args.ram_size,
+            args.persistent_size,
+            args.load_address,
+            args.pic,
+            args.include_framebuffer,
         )
         result = compile_source(args.source.read_text(), str(args.source), target)
         if (

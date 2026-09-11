@@ -189,10 +189,13 @@ emulator records `output` values and screen updates, accepts queued input and
 keyboard values, and models configurable persistent storage.
 
 The text framebuffer is reserved only when a direct call to `printf`,
-`screen_framebuffer`, or `screen_cursor` appears in the source. It is placed
-immediately after the serialized image rather than increasing the binary by
-3,840 bytes; startup clears the reservation, selects ASCII 8 mode, and points
-the screen at it while leaving color and font settings unchanged. Newlines
+`screen_framebuffer`, or `screen_cursor` appears in the source. By default it
+is placed immediately after the serialized image rather than increasing the
+binary by 3,840 bytes. Startup clears that reservation with 960 32-bit stores,
+unrolled eight at a time, selects ASCII 8 mode, and points the screen at it
+while leaving color and font settings unchanged. Pass `--include-framebuffer`
+to serialize its zero-filled 3,840 bytes into the binary instead; this makes
+the file larger but avoids the startup clear. Newlines
 advance to the next 96-character row. Output past row 40 is discarded;
 scrolling can be implemented by application code that rewrites the buffer and
 calls `screen_cursor`.

@@ -11,6 +11,7 @@ class Target:
     persistent_size: int = 0
     load_address: int = 0
     pic: bool = False
+    include_framebuffer: bool = False
 
     def validate(self):
         for name, size in (

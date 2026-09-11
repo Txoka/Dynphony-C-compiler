@@ -17,9 +17,22 @@ from dynphony.targets.dynphony.abi import ABI
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run(source, expected=None, pic=False, address=0, ram=1 << 20, inputs=()):
+def run(
+    source,
+    expected=None,
+    pic=False,
+    address=0,
+    ram=1 << 20,
+    inputs=(),
+    include_framebuffer=False,
+):
     source = source.replace("-2147483648", "(-2147483647-1)")
-    target = Target(ram_size=ram, pic=pic, load_address=0 if pic else address)
+    target = Target(
+        ram_size=ram,
+        pic=pic,
+        load_address=0 if pic else address,
+        include_framebuffer=include_framebuffer,
+    )
     result = compile_source(source, target=target)
     machine = Machine(result.image.binary, ram, address, inputs=inputs)
     halt = result.image.symbols["_halt"] + (address if pic else 0)
@@ -209,6 +222,17 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(bytes(machine.memory[framebuffer + 96 : framebuffer + 102]), b"x = 42")
         self.assertEqual(bytes(machine.memory[framebuffer + 192 : framebuffer + 197]), b"hello")
         self.assertEqual(machine.memory[framebuffer + 288], ord("A"))
+
+        included, included_machine = run(source, 0, include_framebuffer=True)
+        included_framebuffer = included.image.symbols["__dyn_printf_framebuffer"]
+        self.assertGreater(len(included.image.binary), len(result.image.binary) + 3_700)
+        self.assertLess(included_framebuffer, len(included.image.binary))
+        self.assertGreaterEqual(framebuffer, len(result.image.binary))
+        self.assertLess(included_machine.steps + 900, machine.steps)
+        self.assertEqual(
+            bytes(included_machine.memory[included_framebuffer : included_framebuffer + 2]),
+            b"42",
+        )
 
         result, machine = run(
             """int main(void) {

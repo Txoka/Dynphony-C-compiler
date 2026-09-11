@@ -168,7 +168,7 @@ The optimizer currently applies safe local and whole-program reductions:
 - After final layout, all symbolic fixed-address branches and direct calls relax to their shortest legal immediate or register-target encoding. Shrinking is repeated until instruction sizes and label addresses are stable, with no unreachable padding retained.
 - Termination repeats one jump instruction. Fixed low-address images use `jmp immediate`; PIC and high-address images materialize the target once outside the loop and repeat `jmp r7`.
 
-The next substantial opportunities are SSA phi nodes, full data-flow propagation between blocks, control-flow-aware stack-slot reuse, common-subexpression elimination, loop-invariant code motion, cost-based inlining, and optional bounded loop unrolling. Stack-slot reuse must use control-flow liveness rather than textual instruction intervals because loop backedges make the latter incorrect. The detailed checklist is in [docs/optimization-todos.md](docs/optimization-todos.md).
+The next substantial opportunities are dead-global elimination, immutable-global load folding, bounded compile-time evaluation, loop analysis, paired division/remainder, common-subexpression elimination, and control-flow-aware stack-slot reuse. Stack-slot reuse must use control-flow liveness rather than textual instruction intervals because loop backedges make the latter incorrect. The dependency-ordered checklist is in [docs/optimization-todos.md](docs/optimization-todos.md).
 
 ## Project structure
 

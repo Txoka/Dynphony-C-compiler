@@ -24,44 +24,42 @@ only when it preserves behavior without increasing final code size or runtime.
 Every iteration includes both local/CFG and call-graph work; these are not two
 one-shot phases.
 
-Next work, in priority order:
+Remaining work, in dependency and payoff order:
 
-1. [x] Introduce explicit basic blocks with predecessor/successor edges and
-   compute block reachability from each function entry.
-2. [x] Represent startup as an ordinary root IR function containing target startup
-   operations, the call to `main`, and termination. The backend only lowers those
-   operations; it must not contain a separate `main`-fusion optimization.
-3. [x] In each global iteration, run constant/copy propagation, folding, branch
-   pruning, dead-code and dead-store removal, and CFG cleanup; then recompute the
-   call graph and remove unreachable functions. Conservatively retain functions
-   whose addresses remain observable.
-4. [x] Relocate/in-line non-recursive functions with exactly one surviving direct
-   call site, deleting the standalone body so the transformation duplicates no code.
-5. [ ] Relocate a recursive function with exactly one external caller when this
-   can be represented without body duplication. Keep a stable label for recursive
-   calls and preserve the distinct outer and recursive return continuations.
-   Safe self-tail recursion is now converted to a loop and then relocated by the
-   ordinary one-caller pass. General non-tail recursion still requires distinct
-   frames and return continuations and remains pending.
-6. [x] Repeat the entire optimization cycle until no local instruction, CFG edge,
-   reachable-function set, or call site changes. Startup's sole call to `main`
-   then lets the ordinary one-caller rule absorb `main` and remove call/return overhead.
-7. [x] Complete the current no-growth algebraic identity set. Jump threading, adjacent
-   trivial-block merging, and unreachable-block removal already run in the fixed point.
-8. [ ] Recognize matching quotient/remainder expressions with the same proven-pure
-   operands and lower them to a two-result `divmod` IR operation. This should let
-   `q = a / b; r = a % b;` run one restoring-division loop, while preserving C
-   signed quotient/remainder rules and refusing expressions with calls, volatile
-   accesses, or intervening operand mutations.
-9. [x] Relax forward static calls and branches after final layout without retaining
-   unreachable padding.
-10. [ ] Track flag liveness across instructions known to preserve flags.
-11. [ ] Add bounded compile-time evaluation of side-effect-free calls with known
-    arguments after the Tier 1 fixed point is stable. This can fold examples such
-    as `factorial(5) + 22` without recursively duplicating code.
-12. [x] Add transient SSA/phi analysis and sparse conditional constant propagation.
-    Block liveness, register reuse, local value numbering, and loop-invariant code
-    motion remain separate work where each transform must satisfy the Tier 1 policy.
+1. [ ] Add whole-program dead-global elimination to the global fixed point. Roots
+   are globals referenced by reachable code and externally required runtime data;
+   initializer relocations recursively retain their target globals and functions.
+   Removing the last pointer relocation must also remove unnecessary PIC relocation
+   work. This is small, no-growth, and immediately removes unused static bytes.
+2. [ ] Classify globals as immutable when reachable code cannot write them directly
+   or through an escaping alias. Fold loads from immutable scalar and array data,
+   including symbolic pointer initializers. This provides the memory facts needed
+   to evaluate constant table loops without treating arbitrary loads as pure.
+3. [ ] Add a bounded IR evaluator for side-effect-free calls and loops with known
+   inputs. Give it explicit instruction, recursion-depth, and memory limits; reject
+   device operations, volatile access, unknown calls, undefined operations, and
+   writes outside private evaluator state. Feed successful results back into the
+   ordinary fixed point. Together with priorities 1-2, this should collapse the
+   constant demo to `mov r1, 146` plus halt.
+4. [ ] Identify natural loops, induction variables, and proven constant trip counts.
+   Use these facts for loop-invariant code motion and bounded evaluation first;
+   retain code-growing unrolling behind its explicit option.
+5. [ ] Recognize matching quotient/remainder expressions with identical proven-pure
+   operands and lower them to a two-result `divmod` IR operation. Preserve signed
+   C semantics and reject intervening mutation, volatile access, and calls.
+6. [ ] Add local value numbering, then global value numbering, using conservative
+   alias invalidation for loads. This removes repeated arithmetic and address work.
+7. [ ] Add block liveness and interference-based register/stack-slot reuse, followed
+   by loop-depth spill costs and better caller-saved allocation.
+8. [ ] Add the small post-allocation peephole pass and iterate it with branch/call
+   relaxation. It should only remove artifacts requiring physical-register knowledge.
+9. [ ] Relocate eligible non-tail recursive functions with one external caller only
+   when distinct recursive frames and outer/recursive return continuations can be
+   represented without body duplication or runtime growth. Tail recursion is done.
+10. [ ] Add flag liveness and profile/cost-guided block ordering after the preceding
+    CFG and register foundations are stable.
+11. [ ] Implement the memory-runtime work (`mem*`, heap, and allocation) independently
+    of optimizer correctness; retain collision checks as an opt-in target policy.
 
 ## Deferred and optional work
 
@@ -136,6 +134,18 @@ Next work, in priority order:
 - [x] Propagate constants through transient phi joins.
 - [x] Discover executable edges while propagating values.
 - [x] Remove blocks and edges proven unreachable.
+
+## Whole-program globals and compile-time evaluation
+
+- [ ] Remove unreferenced globals from the module before binary layout.
+- [ ] Follow global-initializer relocations transitively, so a live pointer keeps
+  its target alive while an unreachable pointer and target can both disappear.
+- [ ] Recompute PIC startup relocation work after global deletion.
+- [ ] Prove immutable globals using stores, pointer escapes, calls, and aliases.
+- [ ] Fold typed big-endian loads from proven-immutable initialized data.
+- [ ] Evaluate bounded side-effect-free loops and calls with known arguments.
+- [ ] Re-run SCCP, call-graph reachability, and dead-global elimination after each
+  successful compile-time evaluation.
 
 ## 6. Register allocation across control flow
 

@@ -254,13 +254,7 @@ def propagate_and_fold(function):
             if definition_counts.get(instruction.dst, 0) != 1:
                 aliases.pop(instruction.dst, None)
         rewritten.append(instruction)
-        if instruction.op in (
-            "jump",
-            "branch",
-            "branch_if",
-            "cbranch_if",
-            "return",
-        ):
+        if instruction.op in ("jump", "branch_if", "cbranch_if", "return"):
             barrier()
     function.instructions = rewritten
 
@@ -280,15 +274,7 @@ def simplify_control_flow(function):
             if dead and instruction.op != "label":
                 changed = True
                 continue
-            if instruction.op == "branch" and instruction.args[0] in constants:
-                instruction = Instruction(
-                    "jump",
-                    extra=instruction.extra[
-                        0 if constants[instruction.args[0]] else 1
-                    ],
-                )
-                changed = True
-            elif instruction.op == "branch_if" and instruction.args[0] in constants:
+            if instruction.op == "branch_if" and instruction.args[0] in constants:
                 truthy, target = instruction.extra
                 if bool(constants[instruction.args[0]]) == truthy:
                     instruction = Instruction("jump", extra=target)
@@ -297,7 +283,7 @@ def simplify_control_flow(function):
                     changed = True
                     continue
                 changed = True
-            elif instruction.op in ("cbranch", "cbranch_if") and all(
+            elif instruction.op == "cbranch_if" and all(
                 value in constants for value in instruction.args
             ):
                 operator = instruction.extra[0]
@@ -307,12 +293,7 @@ def simplify_control_flow(function):
                     constants[instruction.args[1]],
                     instruction.type,
                 )
-                if instruction.op == "cbranch":
-                    instruction = Instruction(
-                        "jump", extra=instruction.extra[1 if result else 2]
-                    )
-                    dead = True
-                elif result:
+                if result:
                     instruction = Instruction("jump", extra=instruction.extra[1])
                     dead = True
                 else:
@@ -352,10 +333,6 @@ def simplify_control_flow(function):
         for instruction in function.instructions:
             if instruction.op == "jump":
                 referenced_labels.add(instruction.extra)
-            elif instruction.op == "branch":
-                referenced_labels.update(instruction.extra)
-            elif instruction.op == "cbranch":
-                referenced_labels.update(instruction.extra[1:])
             elif instruction.op in ("branch_if", "cbranch_if"):
                 referenced_labels.add(instruction.extra[1])
         without_unused_labels = [
@@ -395,10 +372,6 @@ def thread_jumps(function):
         extra = instruction.extra
         if instruction.op == "jump":
             extra = resolve(extra)
-        elif instruction.op == "branch":
-            extra = tuple(resolve(label) for label in extra)
-        elif instruction.op == "cbranch":
-            extra = (extra[0],) + tuple(resolve(label) for label in extra[1:])
         elif instruction.op in ("branch_if", "cbranch_if"):
             extra = (extra[0], resolve(extra[1]))
         if extra != instruction.extra:
@@ -426,7 +399,7 @@ def fuse_comparison_branches(function):
     rewritten = []
     comparisons = {"==", "!=", "<", "<=", ">", ">="}
     for instruction in function.instructions:
-        if instruction.op == "branch":
+        if instruction.op == "branch_if":
             value = instruction.args[0]
             items = definitions.get(value, ())
             if (
@@ -437,11 +410,21 @@ def fuse_comparison_branches(function):
             ):
                 comparison = items[0]
                 fused.add(id(comparison))
+                operator = comparison.extra
+                if not instruction.extra[0]:
+                    operator = {
+                        "==": "!=",
+                        "!=": "==",
+                        "<": ">=",
+                        "<=": ">",
+                        ">": "<=",
+                        ">=": "<",
+                    }[operator]
                 instruction = Instruction(
-                    "cbranch",
+                    "cbranch_if",
                     args=comparison.args,
                     type=comparison.type,
-                    extra=(comparison.extra, *instruction.extra),
+                    extra=(operator, instruction.extra[1]),
                 )
         rewritten.append(instruction)
     before = tuple(function.instructions)
@@ -449,66 +432,6 @@ def fuse_comparison_branches(function):
         instruction for instruction in rewritten if id(instruction) not in fused
     ]
     return tuple(function.instructions) != before
-
-
-def select_conditional_fallthrough(function):
-    """Make the lexical CFG successor the implicit edge of each conditional."""
-    inverse = {
-        "==": "!=",
-        "!=": "==",
-        "<": ">=",
-        "<=": ">",
-        ">": "<=",
-        ">=": "<",
-    }
-    changed = False
-    rewritten = []
-    for index, instruction in enumerate(function.instructions):
-        following = (
-            function.instructions[index + 1]
-            if index + 1 < len(function.instructions)
-            else None
-        )
-        if following is not None and following.op == "label":
-            if instruction.op == "branch":
-                yes, no = instruction.extra
-                if following.extra == yes:
-                    instruction = Instruction(
-                        "branch_if",
-                        args=instruction.args,
-                        type=instruction.type,
-                        extra=(False, no),
-                    )
-                    changed = True
-                elif following.extra == no:
-                    instruction = Instruction(
-                        "branch_if",
-                        args=instruction.args,
-                        type=instruction.type,
-                        extra=(True, yes),
-                    )
-                    changed = True
-            elif instruction.op == "cbranch":
-                operator, yes, no = instruction.extra
-                if following.extra == yes:
-                    instruction = Instruction(
-                        "cbranch_if",
-                        args=instruction.args,
-                        type=instruction.type,
-                        extra=(inverse[operator], no),
-                    )
-                    changed = True
-                elif following.extra == no:
-                    instruction = Instruction(
-                        "cbranch_if",
-                        args=instruction.args,
-                        type=instruction.type,
-                        extra=(operator, yes),
-                    )
-                    changed = True
-        rewritten.append(instruction)
-    function.instructions = rewritten
-    return changed
 
 
 def inline_single_call_functions(module):
@@ -610,12 +533,6 @@ def inline_single_call_functions(module):
             def remap_extra(instruction):
                 if instruction.op in ("label", "jump"):
                     return labels[instruction.extra]
-                if instruction.op == "branch":
-                    return tuple(labels[label] for label in instruction.extra)
-                if instruction.op == "cbranch":
-                    return (instruction.extra[0],) + tuple(
-                        labels[label] for label in instruction.extra[1:]
-                    )
                 if instruction.op in ("branch_if", "cbranch_if"):
                     return (instruction.extra[0], labels[instruction.extra[1]])
                 return instruction.extra
@@ -759,27 +676,16 @@ def _constant_definitions(function):
 
 def lower_intrinsics(function):
     """Replace direct calls to built-in device functions with target IR ops."""
-    definitions = {
-        instruction.dst: instruction
-        for instruction in function.instructions
-        if instruction.dst is not None
-    }
     rewritten = []
     for instruction in function.instructions:
-        if instruction.op == "call":
-            target = definitions.get(instruction.args[0])
-            if (
-                target is not None
-                and target.op == "global_addr"
-                and target.extra in INTRINSIC_NAMES
-            ):
-                instruction = Instruction(
-                    "intrinsic",
-                    instruction.dst,
-                    instruction.args[1:],
-                    instruction.type,
-                    target.extra,
-                )
+        if instruction.op == "direct_call" and instruction.extra in INTRINSIC_NAMES:
+            instruction = Instruction(
+                "intrinsic",
+                instruction.dst,
+                instruction.args,
+                instruction.type,
+                instruction.extra,
+            )
         rewritten.append(instruction)
     function.instructions = rewritten
 
@@ -1035,7 +941,6 @@ def _optimize_functions(functions):
         simplify_control_flow(function)
         remove_dead_values(function)
         fuse_comparison_branches(function)
-        select_conditional_fallthrough(function)
 
 
 def optimize(module):

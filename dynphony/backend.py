@@ -988,30 +988,6 @@ class Backend:
                     self.condition_jump(operator, i.type.signed), target_label
                 )
                 continue
-            elif op == "cbranch":
-                operator, yes, no = i.extra
-                left, right = i.args
-                immediate = self.u16_constant(right)
-                if immediate is None and operator in ("==", "!="):
-                    left_immediate = self.u16_constant(left)
-                    if left_immediate is not None:
-                        left, right = right, left
-                        immediate = left_immediate
-                self.get(left, 1)
-                if immediate is None:
-                    self.get(right, 2)
-                a.emit(
-                    isa.alu(
-                        "cmp",
-                        15,
-                        1,
-                        immediate if immediate is not None else 2,
-                        immediate is not None,
-                    )
-                )
-                a.branch(self.condition_jump(operator, i.type.signed), yes)
-                a.branch("jmp", no)
-                continue
             elif op == "intrinsic":
                 self.intrinsic(i)
                 self.normalize(1, i.type)
@@ -1020,13 +996,6 @@ class Backend:
                 self.get(i.args[0], 1)
                 a.emit(isa.alu("cmp", 15, 1, 0))
                 a.branch("jne" if truthy else "je", target_label)
-                continue
-            elif op == "branch":
-                self.get(i.args[0], 1)
-                a.emit(isa.alu("cmp", 15, 1, 0))
-                yes, no = i.extra
-                a.branch("jne", yes)
-                a.branch("jmp", no)
                 continue
             elif op == "return":
                 if i.args:

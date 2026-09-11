@@ -1,7 +1,7 @@
 # Optimization roadmap
 
 This tracks the standard optimization work proposed for Dynphony C. Checked
-items are implemented in version 0.10.0. Partially checked sections describe the
+items are implemented in version 0.11.0. Partially checked sections describe the
 working subset and the remaining work explicitly.
 
 ## Current priorities
@@ -15,8 +15,8 @@ Completed foundations:
 - [x] Allocate values that die at calls in `r3`-`r6` without callee-save traffic.
 - [x] Perform ABI argument placement as a parallel assignment, breaking register cycles safely.
 - [x] Eliminate safe tail calls after restoring the current frame.
-- [x] Represent known-symbol calls directly in IR and retain a separate indirect-call form.
-- [x] Represent conditional branches with one explicit target and one CFG fallthrough edge.
+- [x] Emit known-symbol calls directly from lowering and retain a separate indirect-call form.
+- [x] Emit conditional branches with one explicit target and one CFG fallthrough edge.
 
 The next milestone is one global fixed point containing only Tier 1 transformations:
 surviving function bodies are never duplicated, and a transformation is kept

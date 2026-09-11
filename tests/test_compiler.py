@@ -9,6 +9,8 @@ from pathlib import Path
 
 from dynphony import CompileError, Target, compile_source
 from dynphony.emulator import Machine, signed
+from dynphony.frontend import parse, typecheck
+from dynphony.ir import lower
 from dynphony import isa
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -396,6 +398,21 @@ class DiagnosticTests(unittest.TestCase):
 
 
 class EncodingTests(unittest.TestCase):
+    def test_lowerer_emits_canonical_calls_and_fallthrough(self):
+        module = lower(
+            typecheck(
+                parse(
+                    "int f(int x){if(x)return x;return 0;} "
+                    "int main(void){return f(3);}"
+                )
+            )
+        )
+        dump = module.dump()
+        self.assertIn("direct_call (", dump)
+        self.assertIn("branch_if (", dump)
+        self.assertNotIn("global_addr () f", dump)
+        self.assertNotIn("  branch (", dump)
+
     def test_constant_folding_example_is_one_instruction_before_halt(self):
         source = (ROOT / "examples/constant_folding.c").read_text()
         result = compile_source(source)

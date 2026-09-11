@@ -7,8 +7,6 @@ from ..ir import Instruction
 
 TERMINATORS = {
     "jump",
-    "branch",
-    "cbranch",
     "branch_if",
     "cbranch_if",
     "return",
@@ -51,10 +49,6 @@ class ControlFlowGraph:
 def _targets(instruction: Instruction) -> tuple[str, ...]:
     if instruction.op == "jump":
         return (instruction.extra,)
-    if instruction.op == "branch":
-        return tuple(instruction.extra)
-    if instruction.op == "cbranch":
-        return tuple(instruction.extra[1:])
     if instruction.op == "branch_if":
         return (instruction.extra[1],)
     if instruction.op == "cbranch_if":

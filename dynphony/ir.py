@@ -69,8 +69,11 @@ class Lowerer:
     def jump(self, label):
         self.emit("jump", extra=label, result=False)
 
-    def branch(self, value, yes, no):
-        self.emit("branch", (value,), extra=(yes, no), result=False)
+    def branch(self, value, target, truthy=True):
+        """Branch to target on the requested truth value; otherwise fall through."""
+        self.emit(
+            "branch_if", (value,), extra=(truthy, target), result=False
+        )
 
     def const(self, value, t=INT):
         return self.emit("const", type_=t, extra=value)
@@ -138,11 +141,9 @@ class Lowerer:
                 result = self.value()
                 rhs, short, end = self.label(), self.label(), self.label()
                 a = self.expr(n.children[0])
-                (
-                    self.branch(a, rhs, short)
-                    if n.value == "&&"
-                    else self.branch(a, short, rhs)
-                )
+                # The short-circuit block is laid out next. Jump only when the
+                # right operand must be evaluated.
+                self.branch(a, rhs, n.value == "&&")
                 self.mark(short)
                 v = self.const(int(n.value == "||"))
                 self.f.instructions.append(Instruction("copy", result, (v,), INT))
@@ -203,8 +204,20 @@ class Lowerer:
             self.store(addr, value, lhs.type)
             return old if n.value.startswith("p") else value
         if op == "call":
-            values = [self.expr(x) for x in n.children]
-            return self.emit("call", values, n.type)
+            target = n.children[0]
+            arguments = [self.expr(x) for x in n.children[1:]]
+            if (
+                target.op == "address"
+                and target.children[0].op == "var"
+                and target.children[0].value.storage == "function"
+            ):
+                return self.emit(
+                    "direct_call",
+                    arguments,
+                    n.type,
+                    target.children[0].value.key,
+                )
+            return self.emit("call", [self.expr(target), *arguments], n.type)
         if op == "comma":
             for child in n.children:
                 result = self.expr(child)
@@ -212,7 +225,7 @@ class Lowerer:
         if op == "select":
             result = self.value()
             yes, no, end = self.label(), self.label(), self.label()
-            self.branch(self.expr(n.children[0]), yes, no)
+            self.branch(self.expr(n.children[0]), no, False)
             self.mark(yes)
             a = self.expr(n.children[1])
             self.f.instructions.append(Instruction("copy", result, (a,), n.type))
@@ -248,7 +261,7 @@ class Lowerer:
             )
         elif op == "if":
             yes, no, end = self.label(), self.label(), self.label()
-            self.branch(self.expr(n.children[0]), yes, no)
+            self.branch(self.expr(n.children[0]), no, False)
             self.mark(yes)
             self.statement(n.children[1])
             self.jump(end)
@@ -272,7 +285,7 @@ class Lowerer:
             if op == "do":
                 self.jump(body)
             self.mark(test)
-            self.branch(self.expr(cond), body, end)
+            self.branch(self.expr(cond), end, False)
             self.mark(body)
             self.statement(stmt)
             self.mark(step)
@@ -311,15 +324,10 @@ def lower(program):
             Instruction("relocate_globals"),
         ]
     )
-    target = startup.values
-    startup.values += 1
-    startup.instructions.append(
-        Instruction("global_addr", target, (), pointer(main.symbol.type), "main")
-    )
     result = startup.values
     startup.values += 1
     startup.instructions.append(
-        Instruction("call", result, (target,), main.symbol.type.base)
+        Instruction("direct_call", result, (), main.symbol.type.base, "main")
     )
     startup.instructions.append(Instruction("halt", args=(result,)))
     return ModuleIR(program.globals, [startup, *functions])

@@ -188,6 +188,10 @@ Tests live in tests/; the original ISA and design notes live in docs/.
 magnet puzzle. It reads the highest disk number, source, destination, and spare
 locations from the first four inputs and emits the magnet-control sequence.
 
+`examples/constant_folding.c` demonstrates whole-entry constant collapse. Its
+three locals and `a + b * c` expression compile to `mov r1, 1466` followed by
+the halt jump; no multiplication helper or standalone `main` remains.
+
 The API exposes each pipeline stage:
 
 ```python

@@ -57,6 +57,14 @@ Next work, in priority order:
 
 ## Deferred and optional work
 
+- [ ] Add an opt-in stack/heap collision guard, disabled by default so normal
+  freestanding output retains its current cost and behavior. The guard should
+  check a proposed dynamic stack allocation before changing `sp`, reject address
+  wraparound, and jump to a named infinite `_stack_overflow` halt loop on VLA
+  exhaustion. A future heap runtime should use the same boundary from the
+  opposite direction and return `NULL` from `malloc` on collision. Decide the
+  public target option and failure-hook policy before implementation; do not
+  silently add checks to ordinary release output.
 - [ ] Defer function-pointer devirtualization. Continue using conservative
   address-taken reachability for now.
 - [ ] Defer PIC startup self-relocation. If implemented later, place it behind an

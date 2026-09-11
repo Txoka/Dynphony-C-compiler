@@ -10,9 +10,7 @@
     "_start": 0,
     "_halt": 53,
     "move_pile": 57,
-    "move_pile.L1": 108,
     "move_pile.L2": 147,
-    "move_pile.L4": 178,
     "move_pile.L5": 232,
     "@backend.2": 232
   },

@@ -682,7 +682,12 @@ class Backend:
                 definition_indexes.setdefault(instruction.dst, []).append(index)
             for value in instruction.args:
                 use_indexes.setdefault(value, []).append(index)
-            if instruction.op in ("call", "tailcall") or (
+            if instruction.op in (
+                "call",
+                "direct_call",
+                "tailcall",
+                "direct_tailcall",
+            ) or (
                 instruction.op == "binary"
                 and instruction.extra in ("*", "/", "%")
             ):
@@ -695,7 +700,7 @@ class Backend:
             value = instruction.args[0]
             if (
                 index > 0
-                and f.instructions[index - 1].op == "call"
+                and f.instructions[index - 1].op in ("call", "direct_call")
                 and f.instructions[index - 1].dst == value
             ):
                 # The ABI already leaves this immediately consumed result in r1.
@@ -924,6 +929,11 @@ class Backend:
                     a.emit(isa.call(7))
                 self.discard_stack_arguments(stack_arguments)
                 self.normalize(1, i.type)
+            elif op == "direct_call":
+                stack_arguments = self.place_call_arguments(i.args)
+                a.call(i.extra)
+                self.discard_stack_arguments(stack_arguments)
+                self.normalize(1, i.type)
             elif op == "tailcall":
                 target = self.rematerialized.get(i.args[0])
                 symbolic = (
@@ -943,6 +953,40 @@ class Backend:
                     a.branch("jmp", target.extra)
                 else:
                     a.emit(isa.jump("jmp", 7))
+                continue
+            elif op == "direct_tailcall":
+                self.place_call_arguments(i.args)
+                if uses_frame:
+                    a.emit(isa.mov(14, 12))
+                    a.emit(isa.pop(12))
+                for register in reversed(saved_registers):
+                    a.emit(isa.pop(register))
+                a.branch("jmp", i.extra)
+                continue
+            elif op == "cbranch_if":
+                operator, target_label = i.extra
+                left, right = i.args
+                immediate = self.u16_constant(right)
+                if immediate is None and operator in ("==", "!="):
+                    left_immediate = self.u16_constant(left)
+                    if left_immediate is not None:
+                        left, right = right, left
+                        immediate = left_immediate
+                self.get(left, 1)
+                if immediate is None:
+                    self.get(right, 2)
+                a.emit(
+                    isa.alu(
+                        "cmp",
+                        15,
+                        1,
+                        immediate if immediate is not None else 2,
+                        immediate is not None,
+                    )
+                )
+                a.branch(
+                    self.condition_jump(operator, i.type.signed), target_label
+                )
                 continue
             elif op == "cbranch":
                 operator, yes, no = i.extra
@@ -965,48 +1009,22 @@ class Backend:
                         immediate is not None,
                     )
                 )
-                following = (
-                    f.instructions[instruction_index + 1]
-                    if instruction_index + 1 < len(f.instructions)
-                    else None
-                )
-                if following is not None and following.op == "label":
-                    if following.extra == no:
-                        a.branch(self.condition_jump(operator, i.type.signed), yes)
-                        continue
-                    if following.extra == yes:
-                        inverse = {
-                            "==": "!=",
-                            "!=": "==",
-                            "<": ">=",
-                            "<=": ">",
-                            ">": "<=",
-                            ">=": "<",
-                        }[operator]
-                        a.branch(self.condition_jump(inverse, i.type.signed), no)
-                        continue
                 a.branch(self.condition_jump(operator, i.type.signed), yes)
                 a.branch("jmp", no)
                 continue
             elif op == "intrinsic":
                 self.intrinsic(i)
                 self.normalize(1, i.type)
+            elif op == "branch_if":
+                truthy, target_label = i.extra
+                self.get(i.args[0], 1)
+                a.emit(isa.alu("cmp", 15, 1, 0))
+                a.branch("jne" if truthy else "je", target_label)
+                continue
             elif op == "branch":
                 self.get(i.args[0], 1)
                 a.emit(isa.alu("cmp", 15, 1, 0))
                 yes, no = i.extra
-                following = (
-                    f.instructions[instruction_index + 1]
-                    if instruction_index + 1 < len(f.instructions)
-                    else None
-                )
-                if following is not None and following.op == "label":
-                    if following.extra == no:
-                        a.branch("jne", yes)
-                        continue
-                    if following.extra == yes:
-                        a.branch("je", no)
-                        continue
                 a.branch("jne", yes)
                 a.branch("jmp", no)
                 continue

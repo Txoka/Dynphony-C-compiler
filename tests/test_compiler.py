@@ -433,8 +433,10 @@ class EncodingTests(unittest.TestCase):
             expected.extend([source_location, 5, destination_location, 5])
         self.assertEqual(machine.outputs, expected)
         self.assertNotIn("move_one", result.image.symbols)
-        self.assertIn("cbranch", result.ir.dump())
-        self.assertIn("tailcall", result.ir.dump())
+        self.assertIn("cbranch_if", result.ir.dump())
+        self.assertIn("direct_call", result.ir.dump())
+        self.assertIn("direct_tailcall", result.ir.dump())
+        self.assertNotIn("global_addr () move_pile", result.ir.dump())
         self.assertNotIn("main", result.image.symbols)
         self.assertEqual(result.image.frames["_start"], 4)
         self.assertLessEqual(len(result.image.binary), 270)
@@ -464,6 +466,8 @@ class EncodingTests(unittest.TestCase):
             "int add(int a,int b){return a+b;} int (*keep)(int,int)=add; int main(void){return add(20,22);}"
         )
         address = result.image.symbols["add"]
+        self.assertIn("direct_call", result.ir.dump())
+        self.assertNotIn("global_addr () add", result.ir.dump())
         self.assertEqual(result.image.frames["add"], 4)
         self.assertEqual(
             result.image.binary[address : address + 3], isa.alu("add", 1, 1, 2)

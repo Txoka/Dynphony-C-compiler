@@ -5,7 +5,17 @@ from dataclasses import dataclass, field
 from ..ir import Instruction
 
 
-TERMINATORS = {"jump", "branch", "cbranch", "return", "tailcall", "halt"}
+TERMINATORS = {
+    "jump",
+    "branch",
+    "cbranch",
+    "branch_if",
+    "cbranch_if",
+    "return",
+    "tailcall",
+    "direct_tailcall",
+    "halt",
+}
 
 
 @dataclass
@@ -45,6 +55,10 @@ def _targets(instruction: Instruction) -> tuple[str, ...]:
         return tuple(instruction.extra)
     if instruction.op == "cbranch":
         return tuple(instruction.extra[1:])
+    if instruction.op == "branch_if":
+        return (instruction.extra[1],)
+    if instruction.op == "cbranch_if":
+        return (instruction.extra[1],)
     return ()
 
 
@@ -81,9 +95,10 @@ def build_cfg(function) -> ControlFlowGraph:
             for label in _targets(last):
                 if label in label_blocks:
                     block.successors.add(label_blocks[label])
-        if (
-            index + 1 < len(blocks)
-            and (last is None or last.op not in TERMINATORS)
+        if index + 1 < len(blocks) and (
+            last is None
+            or last.op not in TERMINATORS
+            or last.op in ("branch_if", "cbranch_if")
         ):
             block.successors.add(index + 1)
         for successor in block.successors:

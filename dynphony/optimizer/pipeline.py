@@ -254,7 +254,13 @@ def propagate_and_fold(function):
             if definition_counts.get(instruction.dst, 0) != 1:
                 aliases.pop(instruction.dst, None)
         rewritten.append(instruction)
-        if instruction.op in ("jump", "branch", "return"):
+        if instruction.op in (
+            "jump",
+            "branch",
+            "branch_if",
+            "cbranch_if",
+            "return",
+        ):
             barrier()
     function.instructions = rewritten
 
@@ -282,8 +288,45 @@ def simplify_control_flow(function):
                     ],
                 )
                 changed = True
+            elif instruction.op == "branch_if" and instruction.args[0] in constants:
+                truthy, target = instruction.extra
+                if bool(constants[instruction.args[0]]) == truthy:
+                    instruction = Instruction("jump", extra=target)
+                    dead = True
+                else:
+                    changed = True
+                    continue
+                changed = True
+            elif instruction.op in ("cbranch", "cbranch_if") and all(
+                value in constants for value in instruction.args
+            ):
+                operator = instruction.extra[0]
+                result = _fold_binary(
+                    operator,
+                    constants[instruction.args[0]],
+                    constants[instruction.args[1]],
+                    instruction.type,
+                )
+                if instruction.op == "cbranch":
+                    instruction = Instruction(
+                        "jump", extra=instruction.extra[1 if result else 2]
+                    )
+                    dead = True
+                elif result:
+                    instruction = Instruction("jump", extra=instruction.extra[1])
+                    dead = True
+                else:
+                    changed = True
+                    continue
+                changed = True
             instructions.append(instruction)
-            if instruction.op in ("jump", "return", "tailcall", "halt"):
+            if instruction.op in (
+                "jump",
+                "return",
+                "tailcall",
+                "direct_tailcall",
+                "halt",
+            ):
                 dead = True
 
         # Keep even unreferenced labels here. Besides naming branch targets, labels
@@ -313,6 +356,8 @@ def simplify_control_flow(function):
                 referenced_labels.update(instruction.extra)
             elif instruction.op == "cbranch":
                 referenced_labels.update(instruction.extra[1:])
+            elif instruction.op in ("branch_if", "cbranch_if"):
+                referenced_labels.add(instruction.extra[1])
         without_unused_labels = [
             instruction
             for instruction in function.instructions
@@ -354,6 +399,8 @@ def thread_jumps(function):
             extra = tuple(resolve(label) for label in extra)
         elif instruction.op == "cbranch":
             extra = (extra[0],) + tuple(resolve(label) for label in extra[1:])
+        elif instruction.op in ("branch_if", "cbranch_if"):
+            extra = (extra[0], resolve(extra[1]))
         if extra != instruction.extra:
             changed = True
             instruction = Instruction(
@@ -404,6 +451,66 @@ def fuse_comparison_branches(function):
     return tuple(function.instructions) != before
 
 
+def select_conditional_fallthrough(function):
+    """Make the lexical CFG successor the implicit edge of each conditional."""
+    inverse = {
+        "==": "!=",
+        "!=": "==",
+        "<": ">=",
+        "<=": ">",
+        ">": "<=",
+        ">=": "<",
+    }
+    changed = False
+    rewritten = []
+    for index, instruction in enumerate(function.instructions):
+        following = (
+            function.instructions[index + 1]
+            if index + 1 < len(function.instructions)
+            else None
+        )
+        if following is not None and following.op == "label":
+            if instruction.op == "branch":
+                yes, no = instruction.extra
+                if following.extra == yes:
+                    instruction = Instruction(
+                        "branch_if",
+                        args=instruction.args,
+                        type=instruction.type,
+                        extra=(False, no),
+                    )
+                    changed = True
+                elif following.extra == no:
+                    instruction = Instruction(
+                        "branch_if",
+                        args=instruction.args,
+                        type=instruction.type,
+                        extra=(True, yes),
+                    )
+                    changed = True
+            elif instruction.op == "cbranch":
+                operator, yes, no = instruction.extra
+                if following.extra == yes:
+                    instruction = Instruction(
+                        "cbranch_if",
+                        args=instruction.args,
+                        type=instruction.type,
+                        extra=(inverse[operator], no),
+                    )
+                    changed = True
+                elif following.extra == no:
+                    instruction = Instruction(
+                        "cbranch_if",
+                        args=instruction.args,
+                        type=instruction.type,
+                        extra=(operator, yes),
+                    )
+                    changed = True
+        rewritten.append(instruction)
+    function.instructions = rewritten
+    return changed
+
+
 def inline_single_call_functions(module):
     """Relocate non-recursive functions having exactly one direct call site."""
     functions = {function.name: function for function in module.functions}
@@ -424,14 +531,14 @@ def inline_single_call_functions(module):
         for instruction in caller.instructions:
             for position, value in enumerate(instruction.args):
                 uses.setdefault(value, []).append((instruction, position))
+        for instruction in caller.instructions:
+            if instruction.op == "direct_call" and instruction.extra in functions:
+                call_sites[instruction.extra].append((caller, instruction))
         for value, definition in definitions.items():
             if definition.op != "global_addr" or definition.extra not in functions:
                 continue
             for user, position in uses.get(value, ()):
-                if user.op == "call" and position == 0:
-                    call_sites[definition.extra].append((caller, user))
-                else:
-                    observable_addresses.add(definition.extra)
+                observable_addresses.add(definition.extra)
 
     candidates = {}
     for function in module.functions:
@@ -440,7 +547,10 @@ def inline_single_call_functions(module):
             and function.name not in observable_addresses
             and len(call_sites[function.name]) == 1
             and call_sites[function.name][0][0] is not function
-            and not any(i.op in ("startup", "halt", "tailcall") for i in function.instructions)
+            and not any(
+                i.op in ("startup", "halt", "tailcall", "direct_tailcall")
+                for i in function.instructions
+            )
         ):
             candidates[function.name] = function
 
@@ -454,15 +564,10 @@ def inline_single_call_functions(module):
         }
         rewritten = []
         for call_instruction in caller.instructions:
-            if call_instruction.op != "call":
+            if call_instruction.op != "direct_call":
                 rewritten.append(call_instruction)
                 continue
-            target = definitions.get(call_instruction.args[0])
-            callee = (
-                candidates.get(target.extra)
-                if target is not None and target.op == "global_addr"
-                else None
-            )
+            callee = candidates.get(call_instruction.extra)
             if callee is None or callee is caller:
                 rewritten.append(call_instruction)
                 continue
@@ -472,7 +577,7 @@ def inline_single_call_functions(module):
             base = caller.values
             mapping = {value: base + value for value in range(callee.values)}
             caller.values += callee.values
-            call_arguments = call_instruction.args[1:]
+            call_arguments = call_instruction.args
             labels = {
                 instruction.extra: f"{caller.name}.inline{inline_id}.{instruction.extra}"
                 for instruction in callee.instructions
@@ -511,6 +616,8 @@ def inline_single_call_functions(module):
                     return (instruction.extra[0],) + tuple(
                         labels[label] for label in instruction.extra[1:]
                     )
+                if instruction.op in ("branch_if", "cbranch_if"):
+                    return (instruction.extra[0], labels[instruction.extra[1]])
                 return instruction.extra
 
             for instruction in callee.instructions:
@@ -576,10 +683,11 @@ def eliminate_tail_calls(function):
 
     rewritten = []
     for index, instruction in enumerate(instructions):
-        if instruction.op == "call":
+        if instruction.op in ("call", "direct_call"):
             following = continuation(index + 1)
+            argument_count = len(instruction.args) - (instruction.op == "call")
             if (
-                len(instruction.args) <= 7
+                argument_count <= 6
                 and following is not None
                 and following.op == "return"
                 and (
@@ -588,7 +696,10 @@ def eliminate_tail_calls(function):
                 )
             ):
                 instruction = Instruction(
-                    "tailcall", args=instruction.args, type=instruction.type
+                    "direct_tailcall" if instruction.op == "direct_call" else "tailcall",
+                    args=instruction.args,
+                    type=instruction.type,
+                    extra=instruction.extra,
                 )
         rewritten.append(instruction)
     function.instructions = rewritten
@@ -671,6 +782,32 @@ def lower_intrinsics(function):
                 )
         rewritten.append(instruction)
     function.instructions = rewritten
+
+
+def identify_direct_calls(function):
+    """Represent calls to known symbols directly instead of through address values."""
+    definitions = {
+        instruction.dst: instruction
+        for instruction in function.instructions
+        if instruction.dst is not None
+    }
+    changed = False
+    rewritten = []
+    for instruction in function.instructions:
+        if instruction.op == "call":
+            target = definitions.get(instruction.args[0])
+            if target is not None and target.op == "global_addr":
+                instruction = Instruction(
+                    "direct_call",
+                    instruction.dst,
+                    instruction.args[1:],
+                    instruction.type,
+                    target.extra,
+                )
+                changed = True
+        rewritten.append(instruction)
+    function.instructions = rewritten
+    return changed
 
 
 def strength_reduce(function):
@@ -789,7 +926,9 @@ def remove_dead_values(function):
     for index, instruction in enumerate(function.instructions):
         if instruction.dst is None or instruction.op in (
             "call",
+            "direct_call",
             "tailcall",
+            "direct_tailcall",
             "intrinsic",
         ):
             keep.add(index)
@@ -841,6 +980,8 @@ def remove_unreachable_functions(module):
         function = functions[name]
         constants = _constant_definitions(function)
         for instruction in function.instructions:
+            if instruction.op in ("direct_call", "direct_tailcall"):
+                pending.append(instruction.extra)
             if instruction.op == "global_addr" and instruction.extra in functions:
                 pending.append(instruction.extra)
             helper = _runtime_helper(instruction, constants)
@@ -883,6 +1024,7 @@ def _optimize_functions(functions):
     for function in functions:
         promote_readonly_parameters(function)
         lower_intrinsics(function)
+        identify_direct_calls(function)
         promote_scalar_locals(function)
         propagate_and_fold(function)
         simplify_control_flow(function)
@@ -893,6 +1035,7 @@ def _optimize_functions(functions):
         simplify_control_flow(function)
         remove_dead_values(function)
         fuse_comparison_branches(function)
+        select_conditional_fallthrough(function)
 
 
 def optimize(module):

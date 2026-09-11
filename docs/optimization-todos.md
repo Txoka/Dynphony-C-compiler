@@ -1,7 +1,7 @@
 # Optimization roadmap
 
 This tracks the standard optimization work proposed for Dynphony C. Checked
-items are implemented in version 0.9.0. Partially checked sections describe the
+items are implemented in version 0.10.0. Partially checked sections describe the
 working subset and the remaining work explicitly.
 
 ## Current priorities
@@ -15,6 +15,8 @@ Completed foundations:
 - [x] Allocate values that die at calls in `r3`-`r6` without callee-save traffic.
 - [x] Perform ABI argument placement as a parallel assignment, breaking register cycles safely.
 - [x] Eliminate safe tail calls after restoring the current frame.
+- [x] Represent known-symbol calls directly in IR and retain a separate indirect-call form.
+- [x] Represent conditional branches with one explicit target and one CFG fallthrough edge.
 
 The next milestone is one global fixed point containing only Tier 1 transformations:
 surviving function bodies are never duplicated, and a transformation is kept
@@ -78,6 +80,8 @@ Next work, in priority order:
   fallthrough block if it has no other reachable predecessor.
 - [x] Thread jumps through blocks containing only labels and an unconditional jump.
 - [x] Merge adjacent blocks when removing a jump to any immediately following label.
+- [x] Choose the lexical fallthrough edge in IR and invert the condition when the
+  true block follows, before rebuilding the CFG in the global fixed point.
 - [ ] Reorder non-adjacent blocks using execution frequency and size costs.
 
 ## 2. Constant propagation and folding
@@ -170,8 +174,8 @@ memory behavior.
 - [x] Relax forward branches without retaining padding.
 - [x] Use immediate static calls for known backward/already-laid-out targets that fit 16 bits.
 - [x] Relax forward calls to immediate form after final layout.
-- [x] Invert conditions when the true block follows, or use the false block as
-  fallthrough, to remove the paired unconditional jump.
+- [x] Lower the branch direction and fallthrough already selected by IR without
+  repeating that optimization in the backend.
 - [ ] Coalesce redundant register moves.
 - [ ] Eliminate redundant reloads after register allocation.
 - [ ] Remove identity moves such as `mov r1, r1` when flags and observable state

@@ -11,3 +11,5 @@ dist/
 /demo.pic.bin
 /demo.ir
 /demo.map.json
+*.bin
+*.map.json

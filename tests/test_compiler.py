@@ -203,6 +203,7 @@ class ExecutionTests(unittest.TestCase):
         }"""
         result, machine = run(source, 0)
         framebuffer = result.image.symbols["__dyn_printf_framebuffer"]
+        self.assertLess(len(result.image.binary), 3600)
         self.assertEqual(machine.screen_updates, [(0, 0), (1, framebuffer)])
         self.assertEqual(bytes(machine.memory[framebuffer : framebuffer + 2]), b"42")
         self.assertEqual(bytes(machine.memory[framebuffer + 96 : framebuffer + 102]), b"x = 42")

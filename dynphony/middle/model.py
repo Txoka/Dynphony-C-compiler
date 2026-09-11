@@ -167,6 +167,7 @@ class Global:
     symbol: Symbol
     data: bytearray
     relocations: list[tuple[int, str, int]] = field(default_factory=list)
+    reserved: int = 0
 
 
 @dataclass

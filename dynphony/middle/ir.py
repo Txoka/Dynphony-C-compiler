@@ -412,6 +412,7 @@ def lower(program):
         startup.instructions.append(
             Instruction("global_addr", address, (), pointer(CHAR), "__dyn_printf_framebuffer")
         )
+        startup.instructions.append(Instruction("zero", args=(address,), extra=3840))
         startup.instructions.append(
             Instruction("init_text_screen", args=(address,))
         )

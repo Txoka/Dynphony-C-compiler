@@ -909,9 +909,21 @@ class Backend:
         for f in self.module.functions:
             self.function(f)
         for g in self.module.globals:
+            if g.reserved:
+                continue
             a.emit(bytes(align_up(len(a.code), g.symbol.type.align) - len(a.code)))
             a.label(g.symbol.key)
             a.emit(g.data)
+        # Relax branches/calls before assigning addresses to reservations that
+        # live immediately after the serialized image.
+        a.relax_controls()
+        virtual_end = len(a.code)
+        for g in self.module.globals:
+            if not g.reserved:
+                continue
+            virtual_end = align_up(virtual_end, g.symbol.type.align)
+            a.labels[g.symbol.key] = virtual_end
+            virtual_end += g.reserved
         a.finish()
         for g in self.module.globals:
             for offset, symbol, addend in g.relocations:
@@ -927,11 +939,11 @@ class Backend:
                 a.code[start : start + 4] = value.to_bytes(4, "big")
         size = len(a.code)
         start = self.target.load_address % self.target.ram_size
-        if size > self.target.ram_size or start + size > self.target.ram_size:
+        if virtual_end > self.target.ram_size or start + virtual_end > self.target.ram_size:
             raise CompileError(
                 "image does not fit contiguously in configured RAM at load address"
             )
-        if size + max(self.frames.values(), default=0) > self.target.ram_size - start:
+        if virtual_end + max(self.frames.values(), default=0) > self.target.ram_size - start:
             raise CompileError(
                 "image leaves insufficient RAM for the largest single stack frame"
             )

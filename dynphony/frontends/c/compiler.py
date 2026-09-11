@@ -7,6 +7,7 @@ from pycparser import c_ast
 from ..protocol import FrontendResult
 from ...middle.ir import lower
 from ...middle.model import CompileError
+from ...middle.model import CHAR, UINT, Global, Symbol, array
 from ...runtime import (
     NAMES as INTRINSIC_NAMES,
     PROTOTYPES,
@@ -51,6 +52,18 @@ class CFrontend:
         )
         parsed.ext = intrinsics.ext + runtime.ext + screen_runtime + parsed.ext
         typed = typecheck(parsed)
+        if self.uses_text_screen(parsed):
+            typed.globals.extend(
+                [
+                    Global(
+                        Symbol("__dyn_printf_framebuffer", array(CHAR, 3840), "global", "__dyn_printf_framebuffer"),
+                        bytearray(),
+                        reserved=3840,
+                    ),
+                    Global(Symbol("__dyn_printf_cursor", UINT, "global", "__dyn_printf_cursor"), bytearray(4)),
+                    Global(Symbol("__dyn_printf_column", UINT, "global", "__dyn_printf_column"), bytearray(4)),
+                ]
+            )
         return FrontendResult(parsed, typed, lower(typed))
 
 

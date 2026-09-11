@@ -188,12 +188,14 @@ These names are reserved and cannot be redefined by a program. The reference
 emulator records `output` values and screen updates, accepts queued input and
 keyboard values, and models configurable persistent storage.
 
-The text framebuffer is included only when a direct call to `printf`,
-`screen_framebuffer`, or `screen_cursor` appears in the source. Startup selects
-ASCII 8 mode and points the screen at the framebuffer while leaving color and
-font settings unchanged. Newlines advance to the next 96-character row. Output
-past row 40 is discarded; scrolling can be implemented by application code that
-rewrites the buffer and calls `screen_cursor`.
+The text framebuffer is reserved only when a direct call to `printf`,
+`screen_framebuffer`, or `screen_cursor` appears in the source. It is placed
+immediately after the serialized image rather than increasing the binary by
+3,840 bytes; startup clears the reservation, selects ASCII 8 mode, and points
+the screen at it while leaving color and font settings unchanged. Newlines
+advance to the next 96-character row. Output past row 40 is discarded;
+scrolling can be implemented by application code that rewrites the buffer and
+calls `screen_cursor`.
 
 ## Other target facilities
 

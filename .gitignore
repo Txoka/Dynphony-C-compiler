@@ -6,10 +6,5 @@ __pycache__/
 .venv/
 build/
 dist/
-/a.bin
-/demo.bin
-/demo.pic.bin
-/demo.ir
-/demo.map.json
 *.bin
 *.map.json

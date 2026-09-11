@@ -1,7 +1,7 @@
 # Optimization roadmap
 
 This tracks the standard optimization work proposed for Dynphony C. Checked
-items are implemented in version 0.8.0. Partially checked sections describe the
+items are implemented in version 0.9.0. Partially checked sections describe the
 working subset and the remaining work explicitly.
 
 ## Current priorities
@@ -41,9 +41,9 @@ Next work, in priority order:
 6. [x] Repeat the entire optimization cycle until no local instruction, CFG edge,
    reachable-function set, or call site changes. Startup's sole call to `main`
    then lets the ordinary one-caller rule absorb `main` and remove call/return overhead.
-7. [ ] Complete the no-growth algebraic identity set, jump threading, trivial-block
-   merging, and unreachable-block removal as part of that fixed point.
-8. [ ] Relax forward static calls and branches after final layout without retaining
+7. [ ] Complete the no-growth algebraic identity set. Jump threading, adjacent
+   trivial-block merging, and unreachable-block removal already run in the fixed point.
+8. [x] Relax forward static calls and branches after final layout without retaining
    unreachable padding.
 9. [ ] Track flag liveness across instructions known to preserve flags.
 10. [ ] Add bounded compile-time evaluation of side-effect-free calls with known
@@ -76,8 +76,9 @@ Next work, in priority order:
 - [x] Remove unreachable blocks using graph reachability.
 - [x] When a condition folds, remove its untaken CFG edge and delete the adjacent
   fallthrough block if it has no other reachable predecessor.
-- [ ] Thread jumps through empty blocks.
-- [ ] Merge blocks with a single safe predecessor/successor relationship.
+- [x] Thread jumps through blocks containing only labels and an unconditional jump.
+- [x] Merge adjacent blocks when removing a jump to any immediately following label.
+- [ ] Reorder non-adjacent blocks using execution frequency and size costs.
 
 ## 2. Constant propagation and folding
 
@@ -166,10 +167,11 @@ memory behavior.
 - [x] Remove jumps to the immediately following label.
 - [x] Remove an unnecessary branch to the final function epilogue.
 - [x] Avoid saving unused callee-saved registers.
-- [ ] Relax forward branches without retaining padding.
+- [x] Relax forward branches without retaining padding.
 - [x] Use immediate static calls for known backward/already-laid-out targets that fit 16 bits.
-- [ ] Relax forward calls to immediate form after final layout.
-- [ ] Invert conditions to remove unconditional jumps.
+- [x] Relax forward calls to immediate form after final layout.
+- [x] Invert conditions when the true block follows, or use the false block as
+  fallthrough, to remove the paired unconditional jump.
 - [ ] Coalesce redundant register moves.
 - [ ] Eliminate redundant reloads after register allocation.
 - [ ] Remove identity moves such as `mov r1, r1` when flags and observable state
@@ -178,8 +180,22 @@ memory behavior.
   shorter sequence has identical flag behavior.
 - [ ] Remove redundant spill/reload pairs using physical-register and memory
   alias information.
-- [ ] Iterate peephole cleanup and branch/call relaxation until instruction sizes
-  and label addresses are stable.
+- [ ] Iterate peephole cleanup and branch/call relaxation together. Branch/call
+  sizes and label addresses already relax to a fixed point; the machine peephole
+  pass is still missing.
+
+## Runtime library and dynamic memory
+
+- [ ] Ship `memcpy`, `memmove`, `memset`, and `memcmp` as ordinary runtime C
+  functions and include each one only when referenced.
+- [ ] Define the heap between the aligned end of static data and the descending
+  stack, using configured RAM size rather than a hard-coded address.
+- [ ] Provide `malloc`, `free`, `calloc`, and `realloc` through a compact aligned
+  free-list allocator with block splitting and adjacent-block coalescing.
+- [ ] Detect allocation failure and heap/stack collision without requiring a
+  memory-management construct in the C language.
+- [ ] Retain the arena allocator as an optional specialized allocator and example,
+  rather than requiring programs to paste it in for ordinary allocation.
 
 ## Optional loop unrolling
 

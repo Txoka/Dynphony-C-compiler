@@ -150,7 +150,7 @@ The optimizer currently applies safe local and whole-program reductions:
 - Unused pure IR values are removed. Calls and memory/control-flow operations are retained.
 - Non-escaping scalar locals become IR values. Copies and constants propagate within basic blocks; constant arithmetic, comparisons, casts, and branches are folded.
 - Comparisons used only by a branch remain in flags and branch directly, without constructing, spilling, and retesting a Boolean value.
-- Instructions after an unconditional transfer are removed through the next block boundary. Redundant jumps to the following label and unnecessary final-return epilogue branches are omitted.
+- Instructions after an unconditional transfer are removed through the next block boundary. Jumps are threaded through forwarding blocks, jumps to any immediately following label are removed, and conditional branches use the following block as fallthrough.
 - Startup is represented by the `_start` IR root. Functions and software arithmetic helpers unreachable from it, calls, function pointers, or static relocations are omitted.
 - Functions without locals, parameters, or live computed stack values omit the `r12` frame-pointer save/restore.
 - Read-only parameters whose addresses are never taken become ordinary IR values. A local register allocator keeps straight-line leaf expressions in `r1`–`r7`, preferring their incoming argument registers. For example, `int add(int a, int b) { return a + b; }` begins with `add r1, r1, r2` and needs no frame.
@@ -159,8 +159,7 @@ The optimizer currently applies safe local and whole-program reductions:
 - A global Tier 1 fixed point alternates local/CFG simplification with call-graph reachability. Non-recursive functions with exactly one surviving direct call site are relocated into that site and their standalone body is deleted. This naturally absorbs `main` into `_start` when possible.
 - Explicit CFG construction records predecessors and successors, removes unreachable blocks after branch folding, and deletes unused labels. Straight-line intrinsic functions use the leaf allocator, so input parameters can remain in their incoming registers.
 - Safe tail calls restore the current frame and jump directly to the callee. Functions with addressable local objects stay on the ordinary call path because a callee may receive a pointer into that frame.
-- Calls to already-laid-out fixed targets use the ISA's immediate static-call form when the address fits 16 bits.
-- Backward branches to low fixed addresses use the immediate encoding directly. Forward unconditional branches retain stable layout but execute as one immediate jump when their final target fits 16 bits.
+- After final layout, all symbolic fixed-address branches and direct calls relax to their shortest legal immediate or register-target encoding. Shrinking is repeated until instruction sizes and label addresses are stable, with no unreachable padding retained.
 - Termination repeats one jump instruction. Fixed low-address images use `jmp immediate`; PIC and high-address images materialize the target once outside the loop and repeat `jmp r7`.
 
 The next substantial opportunities are SSA phi nodes, full data-flow propagation between blocks, control-flow-aware stack-slot reuse, common-subexpression elimination, loop-invariant code motion, cost-based inlining, and optional bounded loop unrolling. Stack-slot reuse must use control-flow liveness rather than textual instruction intervals because loop backedges make the latter incorrect. The detailed checklist is in [docs/optimization-todos.md](docs/optimization-todos.md).
@@ -201,8 +200,9 @@ the global fixed point, producing the identical 8-byte result.
 
 `examples/arena_allocator.c` supplies bytewise memory set/copy functions and an
 aligned bump allocator built from `struct Arena`. It demonstrates structures,
-`const` pointers, `sizeof`, `void *` conversions, and allocation without compiler
-intrinsics or an operating system.
+`const` pointers, `sizeof`, `void *` conversions, and allocation without an
+operating system. A bundled, reference-on-demand `malloc`/memory runtime remains
+on the roadmap; applications currently have to include their allocator source.
 
 The API exposes each pipeline stage:
 

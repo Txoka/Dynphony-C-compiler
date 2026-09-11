@@ -437,7 +437,8 @@ class EncodingTests(unittest.TestCase):
         self.assertIn("tailcall", result.ir.dump())
         self.assertNotIn("main", result.image.symbols)
         self.assertEqual(result.image.frames["_start"], 4)
-        self.assertLessEqual(len(result.image.binary), 348)
+        self.assertLessEqual(len(result.image.binary), 270)
+        self.assertEqual(machine.steps, 314)
 
     def test_arena_allocator_example(self):
         source = (ROOT / "examples/arena_allocator.c").read_text()

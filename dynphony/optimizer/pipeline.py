@@ -3,7 +3,7 @@
 from ..ir import Instruction, ModuleIR
 from ..intrinsics import NAMES as INTRINSIC_NAMES
 from ..model import pointer
-from .cfg import prune_unreachable_blocks
+from .cfg import build_cfg, prune_unreachable_blocks
 
 PURE = {
     "param",
@@ -293,16 +293,12 @@ def simplify_control_flow(function):
         result = []
         for index, instruction in enumerate(instructions):
             if instruction.op == "jump":
-                following = (
-                    instructions[index + 1]
-                    if index + 1 < len(instructions)
-                    else None
-                )
-                if (
-                    following is not None
-                    and following.op == "label"
-                    and following.extra == instruction.extra
-                ):
+                following_labels = set()
+                cursor = index + 1
+                while cursor < len(instructions) and instructions[cursor].op == "label":
+                    following_labels.add(instructions[cursor].extra)
+                    cursor += 1
+                if instruction.extra in following_labels:
                     changed = True
                     continue
             result.append(instruction)
@@ -326,6 +322,50 @@ def simplify_control_flow(function):
             function.instructions = without_unused_labels
             changed = True
     return tuple(function.instructions) != original
+
+
+def thread_jumps(function):
+    """Redirect edges through blocks containing only labels and one jump."""
+    cfg = build_cfg(function)
+    redirects = {}
+    for block in cfg.blocks:
+        operations = [item for item in block.instructions if item.op != "label"]
+        if len(operations) == 1 and operations[0].op == "jump":
+            for label in block.labels:
+                if label != operations[0].extra:
+                    redirects[label] = operations[0].extra
+    if not redirects:
+        return False
+
+    def resolve(label):
+        seen = set()
+        while label in redirects and label not in seen:
+            seen.add(label)
+            label = redirects[label]
+        return label
+
+    changed = False
+    rewritten = []
+    for instruction in function.instructions:
+        extra = instruction.extra
+        if instruction.op == "jump":
+            extra = resolve(extra)
+        elif instruction.op == "branch":
+            extra = tuple(resolve(label) for label in extra)
+        elif instruction.op == "cbranch":
+            extra = (extra[0],) + tuple(resolve(label) for label in extra[1:])
+        if extra != instruction.extra:
+            changed = True
+            instruction = Instruction(
+                instruction.op,
+                instruction.dst,
+                instruction.args,
+                instruction.type,
+                extra,
+            )
+        rewritten.append(instruction)
+    function.instructions = rewritten
+    return changed
 
 
 def fuse_comparison_branches(function):
@@ -875,6 +915,7 @@ def optimize(module):
         inline_single_call_functions(module)
         for function in module.functions:
             eliminate_tail_calls(function)
+            thread_jumps(function)
             simplify_control_flow(function)
             remove_dead_values(function)
         remove_unreachable_functions(module)

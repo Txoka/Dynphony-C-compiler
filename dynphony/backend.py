@@ -52,7 +52,7 @@ class Assembler:
         self.code = bytearray()
         self.labels = {}
         self.fixups = []
-        self.branch_fixups = []
+        self.control_fixups = []
 
     def emit(self, data):
         self.code.extend(data)
@@ -69,22 +69,77 @@ class Assembler:
             self.emit(isa.alu("add", r, 13, r))
 
     def branch(self, op, label):
-        if not self.target.pic and label in self.labels:
-            target = self.target.load_address + self.labels[label]
-            if target <= 0xFFFF:
-                self.emit(isa.jump(op, target, True))
-                return
-        if not self.target.pic and op == "jmp":
-            # Preserve the long-branch layout for forward references. At finish,
-            # low targets become one immediate jump followed by unreachable
-            # padding; high targets retain constant materialization plus jmp r7.
-            self.branch_fixups.append((len(self.code), label))
-            self.emit(isa.jump("jmp", 0, True) + bytes(11))
+        if not self.target.pic:
+            self.control_fixups.append((len(self.code), "branch", op, label, 15))
+            self.emit(bytes(15))
             return
         self.address(7, label)
         self.emit(isa.jump(op, 7))
 
+    def call(self, label):
+        if not self.target.pic:
+            self.control_fixups.append((len(self.code), "call", None, label, 28))
+            self.emit(bytes(28))
+            return
+        self.address(7, label)
+        self.emit(isa.call(7))
+
+    def relax_controls(self):
+        """Shrink symbolic fixed-address branches/calls after final layout."""
+        if not self.control_fixups:
+            return
+        choices = {offset: old_size for offset, _, _, _, old_size in self.control_fixups}
+
+        def translated(position):
+            return position - sum(
+                old_size - choices[offset]
+                for offset, _, _, _, old_size in self.control_fixups
+                if offset < position
+            )
+
+        while True:
+            changed = False
+            for offset, kind, _, label, old_size in self.control_fixups:
+                if label not in self.labels:
+                    raise CompileError(f"undefined symbol: {label}")
+                target = self.target.load_address + translated(self.labels[label])
+                size = (4 if kind == "branch" else 17) if target <= 0xFFFF else old_size
+                if choices[offset] != size:
+                    choices[offset] = size
+                    changed = True
+            if not changed:
+                break
+
+        original = bytes(self.code)
+        rebuilt = bytearray()
+        cursor = 0
+        for offset, kind, op, label, old_size in sorted(self.control_fixups):
+            rebuilt.extend(original[cursor:offset])
+            target = self.target.load_address + translated(self.labels[label])
+            if kind == "branch":
+                rebuilt.extend(
+                    isa.jump(op, target, True)
+                    if target <= 0xFFFF
+                    else isa.constant(7, target) + isa.jump(op, 7)
+                )
+            else:
+                rebuilt.extend(
+                    isa.call(target, True)
+                    if target <= 0xFFFF
+                    else isa.constant(7, target) + isa.call(7)
+                )
+            cursor = offset + old_size
+        rebuilt.extend(original[cursor:])
+        self.code = rebuilt
+        self.labels = {label: translated(offset) for label, offset in self.labels.items()}
+        self.fixups = [
+            (translated(offset), register, label, addend)
+            for offset, register, label, addend in self.fixups
+        ]
+        self.control_fixups.clear()
+
     def finish(self):
+        self.relax_controls()
         for offset, r, label, addend in self.fixups:
             if label not in self.labels:
                 raise CompileError(f"undefined symbol: {label}")
@@ -94,18 +149,6 @@ class Assembler:
                 + (0 if self.target.pic else self.target.load_address)
             )
             self.code[offset : offset + 12] = isa.constant(r, value)
-        for offset, label in self.branch_fixups:
-            if label not in self.labels:
-                raise CompileError(f"undefined symbol: {label}")
-            value = self.target.load_address + self.labels[label]
-            if value <= 0xFFFF:
-                self.code[offset : offset + 15] = (
-                    isa.jump("jmp", value, True) + bytes(11)
-                )
-            else:
-                self.code[offset : offset + 15] = isa.constant(7, value) + isa.jump(
-                    "jmp", 7
-                )
 
 
 class Backend:
@@ -865,38 +908,30 @@ class Backend:
             elif op == "call":
                 arguments = i.args[1:]
                 target = self.rematerialized.get(i.args[0])
-                direct = (
+                symbolic = (
                     target is not None
                     and target.op == "global_addr"
                     and not self.target.pic
-                    and target.extra in a.labels
-                    and self.target.load_address + a.labels[target.extra] <= 0xFFFF
                 )
-                if not direct:
+                if not symbolic:
                     # Preserve an indirect target before argument placement can
                     # overwrite its allocated caller-saved register.
                     self.get(i.args[0], 7)
                 stack_arguments = self.place_call_arguments(arguments)
-                if direct:
-                    a.emit(
-                        isa.call(
-                            self.target.load_address + a.labels[target.extra], True
-                        )
-                    )
+                if symbolic:
+                    a.call(target.extra)
                 else:
                     a.emit(isa.call(7))
                 self.discard_stack_arguments(stack_arguments)
                 self.normalize(1, i.type)
             elif op == "tailcall":
                 target = self.rematerialized.get(i.args[0])
-                direct = (
+                symbolic = (
                     target is not None
                     and target.op == "global_addr"
                     and not self.target.pic
-                    and target.extra in a.labels
-                    and self.target.load_address + a.labels[target.extra] <= 0xFFFF
                 )
-                if not direct:
+                if not symbolic:
                     self.get(i.args[0], 7)
                 self.place_call_arguments(i.args[1:])
                 if uses_frame:
@@ -904,14 +939,8 @@ class Backend:
                     a.emit(isa.pop(12))
                 for register in reversed(saved_registers):
                     a.emit(isa.pop(register))
-                if direct:
-                    a.emit(
-                        isa.jump(
-                            "jmp",
-                            self.target.load_address + a.labels[target.extra],
-                            True,
-                        )
-                    )
+                if symbolic:
+                    a.branch("jmp", target.extra)
                 else:
                     a.emit(isa.jump("jmp", 7))
                 continue
@@ -936,6 +965,26 @@ class Backend:
                         immediate is not None,
                     )
                 )
+                following = (
+                    f.instructions[instruction_index + 1]
+                    if instruction_index + 1 < len(f.instructions)
+                    else None
+                )
+                if following is not None and following.op == "label":
+                    if following.extra == no:
+                        a.branch(self.condition_jump(operator, i.type.signed), yes)
+                        continue
+                    if following.extra == yes:
+                        inverse = {
+                            "==": "!=",
+                            "!=": "==",
+                            "<": ">=",
+                            "<=": ">",
+                            ">": "<=",
+                            ">=": "<",
+                        }[operator]
+                        a.branch(self.condition_jump(inverse, i.type.signed), no)
+                        continue
                 a.branch(self.condition_jump(operator, i.type.signed), yes)
                 a.branch("jmp", no)
                 continue
@@ -945,8 +994,21 @@ class Backend:
             elif op == "branch":
                 self.get(i.args[0], 1)
                 a.emit(isa.alu("cmp", 15, 1, 0))
-                a.branch("jne", i.extra[0])
-                a.branch("jmp", i.extra[1])
+                yes, no = i.extra
+                following = (
+                    f.instructions[instruction_index + 1]
+                    if instruction_index + 1 < len(f.instructions)
+                    else None
+                )
+                if following is not None and following.op == "label":
+                    if following.extra == no:
+                        a.branch("jne", yes)
+                        continue
+                    if following.extra == yes:
+                        a.branch("je", no)
+                        continue
+                a.branch("jne", yes)
+                a.branch("jmp", no)
                 continue
             elif op == "return":
                 if i.args:
@@ -962,10 +1024,9 @@ class Backend:
                     a.emit(isa.pop(12))
                 for register in reversed(saved_registers):
                     a.emit(isa.pop(register))
-                halt_address = self.target.load_address + len(a.code)
-                if not self.target.pic and halt_address <= 0xFFFF:
+                if not self.target.pic:
                     a.label("_halt")
-                    a.emit(isa.jump("jmp", halt_address, True))
+                    a.branch("jmp", "_halt")
                 else:
                     a.address(7, "_halt")
                     a.label("_halt")

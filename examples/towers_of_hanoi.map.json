@@ -5,17 +5,16 @@
     "load_address": 0,
     "pic": false
   },
-  "image_size": 348,
+  "image_size": 270,
   "symbols": {
     "_start": 0,
-    "_halt": 64,
-    "move_pile": 68,
-    "move_pile.L1": 145,
-    "move_pile.L2": 199,
-    "move_pile.L3": 199,
-    "move_pile.L4": 256,
-    "move_pile.L5": 310,
-    "@backend.2": 310
+    "_halt": 53,
+    "move_pile": 57,
+    "move_pile.L1": 108,
+    "move_pile.L2": 147,
+    "move_pile.L4": 178,
+    "move_pile.L5": 232,
+    "@backend.2": 232
   },
   "frame_sizes": {
     "_start": 4,

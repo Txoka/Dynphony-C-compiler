@@ -310,7 +310,7 @@ class Frontend:
 
     def scalar(self, source, n):
         n = self.value(n)
-        if n.type.kind not in ("int", "pointer"):
+        if not n.type.integer and n.type.kind != "pointer":
             self.fail(source, "scalar expression required")
         return n
 

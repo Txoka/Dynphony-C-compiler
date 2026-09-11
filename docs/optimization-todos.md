@@ -45,13 +45,18 @@ Next work, in priority order:
    then lets the ordinary one-caller rule absorb `main` and remove call/return overhead.
 7. [ ] Complete the no-growth algebraic identity set. Jump threading, adjacent
    trivial-block merging, and unreachable-block removal already run in the fixed point.
-8. [x] Relax forward static calls and branches after final layout without retaining
+8. [ ] Recognize matching quotient/remainder expressions with the same proven-pure
+   operands and lower them to a two-result `divmod` IR operation. This should let
+   `q = a / b; r = a % b;` run one restoring-division loop, while preserving C
+   signed quotient/remainder rules and refusing expressions with calls, volatile
+   accesses, or intervening operand mutations.
+9. [x] Relax forward static calls and branches after final layout without retaining
    unreachable padding.
-9. [ ] Track flag liveness across instructions known to preserve flags.
-10. [ ] Add bounded compile-time evaluation of side-effect-free calls with known
+10. [ ] Track flag liveness across instructions known to preserve flags.
+11. [ ] Add bounded compile-time evaluation of side-effect-free calls with known
     arguments after the Tier 1 fixed point is stable. This can fold examples such
     as `factorial(5) + 22` without recursively duplicating code.
-11. [ ] Add SSA construction and sparse conditional constant propagation, followed
+12. [ ] Add SSA construction and sparse conditional constant propagation, followed
     by block liveness, register reuse, local value numbering, and loop-invariant
     code motion where each individual transform satisfies the Tier 1 policy.
 

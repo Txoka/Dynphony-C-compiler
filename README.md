@@ -192,6 +192,10 @@ locations from the first four inputs and emits the magnet-control sequence.
 three locals and `a + b * c` expression compile to `mov r1, 1466` followed by
 the halt jump; no multiplication helper or standalone `main` remains.
 
+`examples/interprocedural_constant_folding.c` computes the same value through a
+sole-called `foo(int)`. Function relocation exposes its argument and locals to
+the global fixed point, producing the identical 8-byte result.
+
 The API exposes each pipeline stage:
 
 ```python

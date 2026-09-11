@@ -1,0 +1,17 @@
+{
+  "target": {
+    "ram_size": 16777216,
+    "persistent_size": 0,
+    "load_address": 0,
+    "pic": false
+  },
+  "image_size": 8,
+  "symbols": {
+    "_start": 0,
+    "_halt": 4
+  },
+  "frame_sizes": {
+    "_start": 4
+  },
+  "symbol_addressing": "absolute addresses"
+}

@@ -342,6 +342,20 @@ class EncodingTests(unittest.TestCase):
         self.assertEqual(machine.run(halt), 1466)
         self.assertEqual(machine.steps, 1)
 
+    def test_interprocedural_constant_folding_example_is_one_instruction(self):
+        source = (ROOT / "examples/interprocedural_constant_folding.c").read_text()
+        result = compile_source(source)
+        halt = result.image.symbols["_halt"]
+        self.assertEqual(halt, len(isa.cheap_constant(1, 1466)))
+        self.assertEqual(result.image.binary[:halt], isa.cheap_constant(1, 1466))
+        self.assertEqual(set(result.image.symbols), {"_start", "_halt"})
+        self.assertNotIn("function foo", result.ir.dump())
+        self.assertNotIn("function main", result.ir.dump())
+        self.assertNotIn("__dyn_mul", result.image.symbols)
+        machine = Machine(result.image.binary, 256)
+        self.assertEqual(machine.run(halt), 1466)
+        self.assertEqual(machine.steps, 1)
+
     def test_towers_of_hanoi_example(self):
         source = (ROOT / "examples/towers_of_hanoi.c").read_text()
         result = compile_source(source)

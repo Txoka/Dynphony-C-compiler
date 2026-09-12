@@ -35,6 +35,7 @@ class BootstrapCompilerTests(unittest.TestCase):
             ("int main(void){return nope;}", 4),
             ("int main(void){return 1/0;}", 5),
             ("enum Bad { SAME, SAME }; int main(void){return 0;}", 4),
+            ("typedef int same; typedef char same; int main(void){return 0;}", 4),
         ):
             with self.subTest(source=source):
                 status, compiler, binary, control = run_stage0(
@@ -321,6 +322,20 @@ class BootstrapCompilerTests(unittest.TestCase):
         self.assertEqual(status, 0)
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(), 48)
+
+    def test_scalar_typedefs_in_globals_parameters_and_locals(self):
+        source = b'''typedef unsigned int word;
+        typedef char byte;
+        word base = 30;
+        word add(byte left, word right) {
+            word result = left + right;
+            return result;
+        }
+        int main(void) { return add(12, base); }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 42)
 
 
 if __name__ == "__main__":

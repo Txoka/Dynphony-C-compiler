@@ -134,6 +134,32 @@ static unsigned int dyn_find_constant(
     );
 }
 
+static unsigned int dyn_find_alias_from(
+    const struct DynParser *parser,
+    unsigned int position,
+    unsigned int length,
+    unsigned int index
+) {
+    const struct DynTypeAlias *alias;
+    if (!index) return DYN_INVALID_NODE;
+    index -= 1u;
+    alias = &parser->program->aliases[index];
+    if (dyn_same_name(
+        parser, alias->name_position, alias->name_length, position, length
+    )) return index;
+    return dyn_find_alias_from(parser, position, length, index);
+}
+
+static unsigned int dyn_find_alias(
+    const struct DynParser *parser,
+    unsigned int position,
+    unsigned int length
+) {
+    return dyn_find_alias_from(
+        parser, position, length, parser->program->alias_count
+    );
+}
+
 static unsigned int dyn_add_local(
     struct DynParser *parser,
     unsigned int size,
@@ -455,6 +481,17 @@ static unsigned int dyn_scalar_type(struct DynParser *parser) {
     ) {
         dyn_lexer_next(&parser->lexer);
         return size;
+    }
+    if (parser->lexer.current.kind == DYN_TOK_IDENTIFIER) {
+        unsigned int alias = dyn_find_alias(
+            parser, parser->lexer.current.position,
+            parser->lexer.current.length
+        );
+        if (alias != DYN_INVALID_NODE) {
+            size = parser->program->aliases[alias].size;
+            dyn_lexer_next(&parser->lexer);
+            return size;
+        }
     }
     return 0u;
 }
@@ -821,11 +858,16 @@ static unsigned int dyn_sequence(
     return dyn_new_node(parser, DYN_NODE_SEQUENCE, 0, left, right);
 }
 
-static int dyn_declaration_start(int kind) {
+static int dyn_declaration_start(const struct DynParser *parser) {
+    int kind = parser->lexer.current.kind;
     return kind == DYN_TOK_INT || kind == DYN_TOK_UNSIGNED
         || kind == DYN_TOK_SIGNED || kind == DYN_TOK_CHAR_TYPE
         || kind == DYN_TOK_SHORT || kind == DYN_TOK_LONG
-        || kind == DYN_TOK_CONST;
+        || kind == DYN_TOK_CONST
+        || (kind == DYN_TOK_IDENTIFIER && dyn_find_alias(
+            parser, parser->lexer.current.position,
+            parser->lexer.current.length
+        ) != DYN_INVALID_NODE);
 }
 
 static unsigned int dyn_declaration(struct DynParser *parser) {
@@ -899,7 +941,7 @@ static unsigned int dyn_statement(struct DynParser *parser) {
         parser->scope_depth -= 1u;
         return sequence;
     }
-    if (dyn_declaration_start(parser->lexer.current.kind))
+    if (dyn_declaration_start(parser))
         return dyn_declaration(parser);
     if (parser->lexer.current.kind == DYN_TOK_RETURN) {
         dyn_lexer_next(&parser->lexer);
@@ -956,7 +998,7 @@ static unsigned int dyn_statement(struct DynParser *parser) {
         unsigned int body;
         dyn_lexer_next(&parser->lexer);
         dyn_take(parser, DYN_TOK_LPAREN);
-        if (dyn_declaration_start(parser->lexer.current.kind))
+        if (dyn_declaration_start(parser))
             initializer = dyn_declaration(parser);
         else {
             if (parser->lexer.current.kind != DYN_TOK_SEMICOLON)
@@ -1158,6 +1200,7 @@ int dyn_parse(
     program->function_count = 0;
     program->global_count = 0;
     program->constant_count = 0;
+    program->alias_count = 0;
     program->main_function = DYN_INVALID_NODE;
     program->source = source;
     program->expression = DYN_INVALID_NODE;
@@ -1173,10 +1216,15 @@ int dyn_parse(
         int pointer = 0;
         int external = 0;
         int internal = 0;
+        int type_alias = 0;
         struct DynFunction *function;
         if (parser.lexer.current.kind == DYN_TOK_ENUM) {
             dyn_parse_enum(&parser);
             continue;
+        }
+        if (parser.lexer.current.kind == DYN_TOK_TYPEDEF) {
+            type_alias = 1;
+            dyn_lexer_next(&parser.lexer);
         }
         while (parser.lexer.current.kind == DYN_TOK_STATIC
             || parser.lexer.current.kind == DYN_TOK_EXTERN) {
@@ -1199,6 +1247,24 @@ int dyn_parse(
         name_position = parser.lexer.current.position;
         name_length = parser.lexer.current.length;
         dyn_lexer_next(&parser.lexer);
+        if (type_alias) {
+            struct DynTypeAlias *alias;
+            if (pointer || external || internal
+                || program->alias_count >= program->alias_capacity
+                || dyn_find_alias(
+                    &parser, name_position, name_length
+                ) != DYN_INVALID_NODE) {
+                parser.error = 1;
+                break;
+            }
+            dyn_take(&parser, DYN_TOK_SEMICOLON);
+            alias = &program->aliases[program->alias_count];
+            program->alias_count += 1u;
+            alias->name_position = name_position;
+            alias->name_length = name_length;
+            alias->size = type_size;
+            continue;
+        }
         if (parser.lexer.current.kind != DYN_TOK_LPAREN) {
             parser.local_base = program->local_count;
             parser.scope_depth = 0;

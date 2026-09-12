@@ -194,6 +194,12 @@ struct DynConstant {
     unsigned int value;
 };
 
+struct DynTypeAlias {
+    unsigned int name_position;
+    unsigned int name_length;
+    unsigned int size;
+};
+
 struct DynAstProgram {
     struct DynNode *nodes;
     unsigned int count;
@@ -213,6 +219,9 @@ struct DynAstProgram {
     struct DynConstant *constants;
     unsigned int constant_count;
     unsigned int constant_capacity;
+    struct DynTypeAlias *aliases;
+    unsigned int alias_count;
+    unsigned int alias_capacity;
 };
 
 void dyn_lexer_init(

@@ -4,9 +4,9 @@ This document describes C accepted **by the compiler in `selfhost/`**, not the
 larger subset accepted by the Python compiler that currently builds it. Every
 new self-hosting language feature should be added here with an execution test.
 
-## Current stage: stage 0.10
+## Current stage: stage 0.11
 
-Stage 0.10 accepts exactly one translation unit containing a `main` definition.
+Stage 0.11 accepts exactly one translation unit containing a `main` definition.
 The original constant-return form remains supported:
 
 ```c
@@ -71,6 +71,8 @@ The runtime-code path additionally supports:
   compatible pointers returns an element count.
 - File-scope enum definitions with optional tags, implicit values, constant
   integer initializers, trailing commas, and use of enumerators in expressions.
+- File-scope typedef declarations for scalar integer types. Their names are
+  accepted as global, parameter, and local declaration specifiers.
 - Runtime arithmetic (including software multiply/divide/remainder), shifts,
   bitwise operations, comparisons, logical operators, conditional expressions,
   and comma expressions.
@@ -78,9 +80,9 @@ The runtime-code path additionally supports:
 Compound statements introduce lexical scopes and inner locals may shadow outer
 locals. Deep expressions that exhaust scratch registers and calls with
 stack-passed arguments are rejected rather than spilled. Multidimensional
-arrays, VLAs, structures, unions, enum-typed object declarations, typedefs,
-full scalar conversions, designated initializers, and multiple translation
-units remain unsupported.
+arrays, VLAs, structures, unions, enum-typed object declarations, pointer and
+aggregate typedefs, block-scope typedefs, full scalar conversions, designated
+initializers, and multiple translation units remain unsupported.
 
 ### Pipeline and generated code
 

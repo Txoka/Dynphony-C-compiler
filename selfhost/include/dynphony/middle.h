@@ -4,6 +4,8 @@
 #include "dynphony/frontend.h"
 
 struct DynIrModule {
+    const struct DynAstProgram *program;
+    int constant;
     unsigned int return_value;
 };
 

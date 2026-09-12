@@ -106,13 +106,18 @@ int dyn_compile_buffer(
     unsigned int capacity;
     int status = DYN_COMPILE_OK;
 
-    *output_length = dyn_image_size();
-    if (output_capacity < *output_length) return DYN_COMPILE_OUTPUT_TOO_SMALL;
+    *output_length = 0;
     if (length > 1048576u) return DYN_COMPILE_INPUT_TOO_LARGE;
     capacity = length + 1u;
     program.nodes = calloc(capacity, sizeof(struct DynNode));
     if (!program.nodes) return DYN_COMPILE_OUT_OF_MEMORY;
+    program.locals = calloc(capacity, sizeof(struct DynLocal));
+    if (!program.locals) {
+        free(program.nodes);
+        return DYN_COMPILE_OUT_OF_MEMORY;
+    }
     program.capacity = capacity;
+    program.local_capacity = capacity;
 
     if (!dyn_parse(source, length, &program))
         status = DYN_COMPILE_PARSE_ERROR;
@@ -121,9 +126,10 @@ int dyn_compile_buffer(
     else {
         dyn_optimize(&module);
         if (!dyn_emit_image(
-            &module, load_address, output, output_capacity
+            &module, load_address, output, output_capacity, output_length
         )) status = DYN_COMPILE_OUTPUT_TOO_SMALL;
     }
+    free(program.locals);
     free(program.nodes);
     return status;
 }
@@ -147,6 +153,7 @@ int dyn_compile_project(
     unsigned int source_count = 0;
     unsigned int image_length = 0;
     unsigned int record_length;
+    unsigned int image_capacity;
     char *source;
     char *image;
     int status;
@@ -192,7 +199,10 @@ int dyn_compile_project(
         dyn_write_failure(output_address, output_capacity);
         return DYN_COMPILE_OUT_OF_MEMORY;
     }
-    image = malloc(dyn_image_size());
+    image_capacity = source_length * 128u + 4096u;
+    if (output_capacity > 4u && image_capacity > output_capacity - 4u)
+        image_capacity = output_capacity - 4u;
+    image = malloc(image_capacity);
     if (!image) {
         free(source);
         dyn_write_failure(output_address, output_capacity);
@@ -202,7 +212,7 @@ int dyn_compile_project(
     source[source_length] = 0;
     status = dyn_compile_buffer(
         source, source_length, program_load_address, image,
-        dyn_image_size(), &image_length
+        image_capacity, &image_length
     );
     record_length = 4u + ((image_length + 3u) & 0xfffffffcu);
     dyn_output_length = record_length;

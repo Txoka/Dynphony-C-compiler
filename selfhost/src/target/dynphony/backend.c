@@ -1,64 +1,223 @@
+#include <stdlib.h>
 #include "dynphony/target.h"
+
+#define DYN_INVALID_NODE 0xffffffffu
 
 struct DynEmitter {
     char *output;
     unsigned int capacity;
     unsigned int position;
+    unsigned int load_address;
+    unsigned int *returns;
+    unsigned int return_count;
+    unsigned int return_capacity;
     int error;
 };
 
-static void dyn_emit_byte(struct DynEmitter *emitter, unsigned int value) {
-    if (emitter->position >= emitter->capacity) {
-        emitter->error = 1;
+static void dyn_byte(struct DynEmitter *e, unsigned int value) {
+    if (e->position >= e->capacity) { e->error = 1; return; }
+    e->output[e->position] = (char)(value & 255u);
+    e->position += 1u;
+}
+
+static void dyn_u16(struct DynEmitter *e, unsigned int value) {
+    dyn_byte(e, value >> 8); dyn_byte(e, value);
+}
+
+static void dyn_alu(struct DynEmitter *e, unsigned int op, unsigned int d,
+                    unsigned int a, unsigned int b) {
+    dyn_byte(e, op); dyn_byte(e, (d << 4) | a); dyn_byte(e, b);
+}
+
+static void dyn_move(struct DynEmitter *e, unsigned int d, unsigned int s) {
+    dyn_alu(e, 0x21u, d, 0u, s);
+}
+
+static void dyn_constant_at(struct DynEmitter *e, unsigned int position,
+                            unsigned int reg, unsigned int value) {
+    unsigned int saved = e->position;
+    e->position = position;
+    dyn_byte(e, 0x31u); dyn_byte(e, reg << 4); dyn_u16(e, value >> 16);
+    dyn_byte(e, 0x37u); dyn_byte(e, (reg << 4) | reg); dyn_u16(e, 16u);
+    dyn_byte(e, 0x31u); dyn_byte(e, (reg << 4) | reg); dyn_u16(e, value);
+    e->position = saved;
+}
+
+static void dyn_constant(struct DynEmitter *e, unsigned int reg,
+                         unsigned int value) {
+    unsigned int position = e->position;
+    unsigned int end = position + 12u;
+    if (end < position || end > e->capacity) { e->error = 1; return; }
+    e->position = end;
+    dyn_constant_at(e, position, reg, value);
+}
+
+static unsigned int dyn_branch(struct DynEmitter *e, unsigned int op) {
+    unsigned int fixup = e->position;
+    dyn_constant(e, 7u, 0u);
+    dyn_byte(e, op); dyn_byte(e, 0x0fu); dyn_byte(e, 0x07u);
+    return fixup;
+}
+
+static void dyn_patch(struct DynEmitter *e, unsigned int fixup,
+                      unsigned int target) {
+    dyn_constant_at(e, fixup, 7u, e->load_address + target);
+}
+
+static void dyn_compare_zero(struct DynEmitter *e, unsigned int reg) {
+    dyn_byte(e, 0x3au); dyn_byte(e, reg); dyn_u16(e, 0u);
+}
+
+static void dyn_boolean(struct DynEmitter *e, unsigned int reg,
+                        unsigned int jump_if_true) {
+    unsigned int yes;
+    unsigned int done;
+    dyn_constant(e, reg, 0u);
+    yes = dyn_branch(e, jump_if_true);
+    done = dyn_branch(e, 0x48u);
+    dyn_patch(e, yes, e->position);
+    dyn_constant(e, reg, 1u);
+    dyn_patch(e, done, e->position);
+}
+
+static void dyn_expression(struct DynEmitter *e,
+                           const struct DynAstProgram *program,
+                           unsigned int index, unsigned int reg) {
+    const struct DynNode *node;
+    unsigned int operation = 0;
+    unsigned int fixup;
+    unsigned int done;
+    if (index >= program->count || reg >= 7u) { e->error = 1; return; }
+    node = &program->nodes[index];
+    if (node->kind == DYN_NODE_NUMBER) { dyn_constant(e, reg, node->value); return; }
+    if (node->kind == DYN_NODE_LOCAL) {
+        if (node->value >= 6u) { e->error = 1; return; }
+        dyn_move(e, reg, 8u + node->value); return;
+    }
+    if (node->kind == DYN_NODE_CALL_INPUT) {
+        dyn_byte(e, 0x01u); dyn_byte(e, reg << 4); return;
+    }
+    if (node->kind == DYN_NODE_CALL_OUTPUT) {
+        dyn_expression(e, program, node->left, reg);
+        dyn_byte(e, 0x02u); dyn_byte(e, 0u); dyn_byte(e, reg);
+        dyn_constant(e, reg, 0u); return;
+    }
+    if (node->kind == DYN_NODE_ASSIGN) {
+        dyn_expression(e, program, node->right, reg);
+        if (node->left >= program->count
+            || program->nodes[node->left].kind != DYN_NODE_LOCAL)
+            e->error = 1;
+        else dyn_move(e, 8u + program->nodes[node->left].value, reg);
         return;
     }
-    emitter->output[emitter->position] = (char)(value & 255u);
-    emitter->position += 1;
+    if (node->kind == DYN_NODE_COMMA) {
+        dyn_expression(e, program, node->left, reg);
+        dyn_expression(e, program, node->right, reg); return;
+    }
+    if (node->kind == DYN_NODE_CONDITIONAL) {
+        dyn_expression(e, program, node->value, reg);
+        dyn_compare_zero(e, reg); fixup = dyn_branch(e, 0x41u);
+        dyn_expression(e, program, node->left, reg);
+        done = dyn_branch(e, 0x48u); dyn_patch(e, fixup, e->position);
+        dyn_expression(e, program, node->right, reg);
+        dyn_patch(e, done, e->position); return;
+    }
+    if (node->kind == DYN_NODE_POSITIVE || node->kind == DYN_NODE_NEGATIVE
+        || node->kind == DYN_NODE_NOT || node->kind == DYN_NODE_LOGICAL_NOT) {
+        dyn_expression(e, program, node->left, reg);
+        if (node->kind == DYN_NODE_NEGATIVE) dyn_alu(e, 0x25u, reg, 0u, reg);
+        else if (node->kind == DYN_NODE_NOT) dyn_alu(e, 0x20u, reg, reg, reg);
+        else if (node->kind == DYN_NODE_LOGICAL_NOT) {
+            dyn_compare_zero(e, reg); dyn_boolean(e, reg, 0x41u);
+        }
+        return;
+    }
+    if (node->kind == DYN_NODE_LOGICAL_AND || node->kind == DYN_NODE_LOGICAL_OR) {
+        dyn_expression(e, program, node->left, reg); dyn_compare_zero(e, reg);
+        fixup = dyn_branch(e, node->kind == DYN_NODE_LOGICAL_AND ? 0x41u : 0x49u);
+        dyn_expression(e, program, node->right, reg); dyn_compare_zero(e, reg);
+        dyn_boolean(e, reg, 0x49u); done = dyn_branch(e, 0x48u);
+        dyn_patch(e, fixup, e->position);
+        dyn_constant(e, reg, node->kind == DYN_NODE_LOGICAL_AND ? 0u : 1u);
+        dyn_patch(e, done, e->position); return;
+    }
+    dyn_expression(e, program, node->left, reg);
+    dyn_expression(e, program, node->right, reg + 1u);
+    if (node->kind == DYN_NODE_ADD) operation = 0x24u;
+    else if (node->kind == DYN_NODE_SUBTRACT) operation = 0x25u;
+    else if (node->kind == DYN_NODE_LSHIFT) operation = 0x27u;
+    else if (node->kind == DYN_NODE_RSHIFT) operation = 0x28u;
+    else if (node->kind == DYN_NODE_AND) operation = 0x22u;
+    else if (node->kind == DYN_NODE_OR) operation = 0x21u;
+    else if (node->kind == DYN_NODE_XOR) operation = 0x26u;
+    if (operation) { dyn_alu(e, operation, reg, reg, reg + 1u); return; }
+    dyn_byte(e, 0x2au); dyn_byte(e, reg); dyn_byte(e, reg + 1u);
+    if (node->kind == DYN_NODE_EQUAL) operation = 0x41u;
+    else if (node->kind == DYN_NODE_NOT_EQUAL) operation = 0x49u;
+    else if (node->kind == DYN_NODE_LESS) operation = 0x42u;
+    else if (node->kind == DYN_NODE_GREATER) operation = 0x4bu;
+    else if (node->kind == DYN_NODE_LESS_EQUAL) operation = 0x43u;
+    else if (node->kind == DYN_NODE_GREATER_EQUAL) operation = 0x4au;
+    if (operation) dyn_boolean(e, reg, operation); else e->error = 1;
 }
 
-static void dyn_emit_u16(struct DynEmitter *emitter, unsigned int value) {
-    dyn_emit_byte(emitter, value >> 8);
-    dyn_emit_byte(emitter, value);
+static void dyn_statement(struct DynEmitter *e,
+                          const struct DynAstProgram *program,
+                          unsigned int index) {
+    const struct DynNode *node;
+    unsigned int branch;
+    unsigned int done;
+    unsigned int top;
+    if (index == DYN_INVALID_NODE) return;
+    if (index >= program->count) { e->error = 1; return; }
+    node = &program->nodes[index];
+    if (node->kind == DYN_NODE_SEQUENCE) {
+        dyn_statement(e, program, node->left); dyn_statement(e, program, node->right);
+    } else if (node->kind == DYN_NODE_RETURN) {
+        dyn_expression(e, program, node->left, 1u);
+        if (e->return_count >= e->return_capacity) { e->error = 1; return; }
+        e->returns[e->return_count] = dyn_branch(e, 0x48u); e->return_count += 1u;
+    } else if (node->kind == DYN_NODE_IF) {
+        dyn_expression(e, program, node->value, 1u); dyn_compare_zero(e, 1u);
+        branch = dyn_branch(e, 0x41u); dyn_statement(e, program, node->left);
+        if (node->right != DYN_INVALID_NODE) {
+            done = dyn_branch(e, 0x48u); dyn_patch(e, branch, e->position);
+            dyn_statement(e, program, node->right); dyn_patch(e, done, e->position);
+        } else dyn_patch(e, branch, e->position);
+    } else if (node->kind == DYN_NODE_WHILE) {
+        top = e->position; dyn_expression(e, program, node->left, 1u);
+        dyn_compare_zero(e, 1u); done = dyn_branch(e, 0x41u);
+        dyn_statement(e, program, node->right);
+        branch = dyn_branch(e, 0x48u); dyn_patch(e, branch, top);
+        dyn_patch(e, done, e->position);
+    } else if (node->kind == DYN_NODE_EXPRESSION || node->kind == DYN_NODE_ASSIGN)
+        dyn_expression(e, program,
+            node->kind == DYN_NODE_EXPRESSION ? node->left : index, 1u);
+    else e->error = 1;
 }
 
-static void dyn_materialize(
-    struct DynEmitter *emitter,
-    unsigned int reg,
-    unsigned int value
-) {
-    dyn_emit_byte(emitter, 0x31u);
-    dyn_emit_byte(emitter, reg << 4);
-    dyn_emit_u16(emitter, value >> 16);
-    dyn_emit_byte(emitter, 0x37u);
-    dyn_emit_byte(emitter, (reg << 4) | reg);
-    dyn_emit_u16(emitter, 16u);
-    dyn_emit_byte(emitter, 0x31u);
-    dyn_emit_byte(emitter, (reg << 4) | reg);
-    dyn_emit_u16(emitter, value);
-}
-
-unsigned int dyn_image_size(void) {
-    return 27u;
-}
-
-int dyn_emit_image(
-    const struct DynIrModule *module,
-    unsigned int load_address,
-    char *output,
-    unsigned int capacity
-) {
-    struct DynEmitter emitter;
-    unsigned int value = module->return_value;
-    emitter.output = output;
-    emitter.capacity = capacity;
-    emitter.position = 0;
-    emitter.error = 0;
-
-    dyn_materialize(&emitter, 1u, value);
-    dyn_materialize(&emitter, 2u, load_address + 24u);
-    /* jmp r2: repeat the final instruction forever. */
-    dyn_emit_byte(&emitter, 0x48u);
-    dyn_emit_byte(&emitter, 0x0fu);
-    dyn_emit_byte(&emitter, 0x02u);
-    return emitter.error ? 0 : 1;
+int dyn_emit_image(const struct DynIrModule *module, unsigned int load_address,
+                   char *output, unsigned int capacity, unsigned int *length) {
+    struct DynEmitter e;
+    unsigned int index;
+    unsigned int halt;
+    e.output = output; e.capacity = capacity; e.position = 0;
+    e.load_address = load_address; e.return_capacity = module->program->count + 1u;
+    e.returns = calloc(e.return_capacity, sizeof(unsigned int));
+    e.return_count = 0; e.error = e.returns ? 0 : 1;
+    if (module->constant) {
+        dyn_constant(&e, 1u, module->return_value);
+        dyn_constant(&e, 7u, load_address + 24u);
+        dyn_byte(&e, 0x48u); dyn_byte(&e, 0x0fu); dyn_byte(&e, 0x07u);
+        *length = e.position; free(e.returns); return e.error ? 0 : 1;
+    }
+    dyn_statement(&e, module->program, module->program->expression);
+    dyn_constant(&e, 1u, 0u); halt = e.position;
+    index = 0;
+    while (index < e.return_count) {
+        dyn_patch(&e, e.returns[index], halt); index += 1u;
+    }
+    dyn_constant(&e, 7u, load_address + halt + 12u);
+    dyn_byte(&e, 0x48u); dyn_byte(&e, 0x0fu); dyn_byte(&e, 0x07u);
+    *length = e.position; free(e.returns); return e.error ? 0 : 1;
 }

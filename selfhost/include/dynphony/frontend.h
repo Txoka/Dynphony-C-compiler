@@ -108,7 +108,16 @@ enum DynNodeKind {
     DYN_NODE_LOGICAL_AND,
     DYN_NODE_LOGICAL_OR,
     DYN_NODE_CONDITIONAL,
-    DYN_NODE_COMMA
+    DYN_NODE_COMMA,
+    DYN_NODE_LOCAL,
+    DYN_NODE_ASSIGN,
+    DYN_NODE_CALL_INPUT,
+    DYN_NODE_CALL_OUTPUT,
+    DYN_NODE_SEQUENCE,
+    DYN_NODE_RETURN,
+    DYN_NODE_IF,
+    DYN_NODE_WHILE,
+    DYN_NODE_EXPRESSION
 };
 
 struct DynNode {
@@ -116,6 +125,12 @@ struct DynNode {
     unsigned int value;
     unsigned int left;
     unsigned int right;
+    unsigned int extra;
+};
+
+struct DynLocal {
+    unsigned int position;
+    unsigned int length;
 };
 
 struct DynAstProgram {
@@ -123,6 +138,10 @@ struct DynAstProgram {
     unsigned int count;
     unsigned int capacity;
     unsigned int expression;
+    const char *source;
+    struct DynLocal *locals;
+    unsigned int local_count;
+    unsigned int local_capacity;
 };
 
 void dyn_lexer_init(

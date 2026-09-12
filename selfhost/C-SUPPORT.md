@@ -4,9 +4,10 @@ This document describes C accepted **by the compiler in `selfhost/`**, not the
 larger subset accepted by the Python compiler that currently builds it. Every
 new self-hosting language feature should be added here with an execution test.
 
-## Current stage: stage 0.2
+## Current stage: stage 0.3
 
-Stage 0 accepts exactly one translation unit containing one `main` definition:
+Stage 0.3 accepts exactly one translation unit containing one `main` definition.
+The original constant-return form remains supported:
 
 ```c
 int main(void) {
@@ -44,19 +45,30 @@ identifiers currently produce a parse error when used in the stage-0 grammar.
 - Division or remainder by zero is rejected.
 - Shift counts greater than or equal to 32 are rejected.
 
-There are currently no variables, assignments, local declarations, arrays,
-pointers, control-flow statements, user-defined functions, function calls,
-structures, enums, typedefs, or multiple translation units.
+The runtime-code path additionally supports:
+
+- Up to six function-scope scalar locals declared as `int`, `unsigned int`,
+  `signed int`, or `char`, with optional initializers.
+- Local reads and simple `=` assignment expressions.
+- Compound blocks, expression statements, `if`/`else`, `while`, and `return`.
+- Direct calls to the `input()` and `output(value)` Dynphony intrinsics.
+- Runtime `+`, `-`, shifts, bitwise operations, comparisons, logical operators,
+  conditional expressions, and comma expressions.
+
+Local scopes are not separated yet, and all locals currently occupy `r8` through
+`r13`. Runtime multiplication, division, and remainder are not emitted yet.
+Arrays, pointers, `for`, `do`, `break`, `continue`, user-defined functions,
+structures, enums, typedefs, and multiple translation units remain unsupported.
 
 ### Pipeline and generated code
 
 - The lexer and recursive-descent parser build an arena-backed expression AST.
-- Semantic lowering evaluates the expression into a one-value IR module.
-- `dyn_optimize` is currently a no-op; the constant result comes from semantic
-  evaluation rather than a general optimization pass.
-- The Dynphony backend emits a 27-byte program that materializes the 32-bit
-  result in `r1` and halts with a register jump at the requested 32-bit load
-  address.
+- Semantic lowering retains the AST for unoptimized runtime code generation;
+  a whole-program constant-return case is still evaluated during bootstrap.
+- `dyn_optimize` is intentionally a no-op.
+- The Dynphony backend emits direct, unoptimized ALU and branch instructions.
+  Constant-return programs remain 27 bytes; dynamic image size depends on the
+  source program.
 - The compiler itself uses `malloc`, `calloc`, and `free` while running, so its
   AST and source buffers exercise the Dynphony heap.
 

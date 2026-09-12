@@ -66,6 +66,25 @@ class BootstrapCompilerTests(unittest.TestCase):
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(control.program_load_address + 24), 23)
 
+    def test_runtime_locals_assignment_control_flow_and_io(self):
+        source = b"""int main(void) {
+            int x = input();
+            unsigned int total = 0;
+            while (x > 0) {
+                total = total + x;
+                x = x - 1;
+            }
+            if (total > 10) output(total); else output(0);
+            return total;
+        }"""
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(
+            binary, load_address=control.program_load_address, inputs=[5]
+        )
+        self.assertEqual(program.run(), 15)
+        self.assertEqual(program.outputs, [15])
+
 
 if __name__ == "__main__":
     unittest.main()

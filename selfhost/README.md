@@ -1,4 +1,4 @@
-# Dynphony compiler in C: stage 0.2
+# Dynphony compiler in C: stage 0.3
 
 This directory is the start of the self-hosting compiler. Its layout mirrors the
 Python implementation where that separation is already useful:
@@ -64,12 +64,18 @@ To compile another source through the C compiler image:
 python tools/bootstrap.py path/to/program.c -o build/program.bin
 ```
 
-For stage 0.2, the compiler reads one translation unit from DCP1 in persistent
+For stage 0.3, the compiler reads one translation unit from DCP1 in persistent
 storage and writes the loader-compatible executable record back there. The
 format and status protocol are specified in
 [PROJECT-FORMAT.md](PROJECT-FORMAT.md). Multi-file records can already be
 packed, but compilation currently rejects bundles containing more than one
 translation unit.
+
+The first dynamic-code path supports six scalar locals, assignment, blocks,
+`if`/`else`, `while`, runtime ALU/comparison/logical expressions, and direct
+`input()`/`output()` calls. It is intentionally unoptimized and register-only;
+stack frames, general functions, and aggregate types are subsequent bootstrap
+layers.
 
 ## Next bootstrap stages
 

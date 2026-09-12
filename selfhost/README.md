@@ -3,6 +3,12 @@
 This directory is the start of the self-hosting compiler. Its layout mirrors the
 Python implementation where that separation is already useful:
 
+- [C-SUPPORT.md](C-SUPPORT.md) is the exact language support matrix.
+- [PROJECT-FORMAT.md](PROJECT-FORMAT.md) specifies persistent project input,
+  compiler output, booting, and the future callable compiler API.
+- [../ROADMAP.md](../ROADMAP.md) tracks the path to self-hosting and later
+  optimization.
+
 ```text
 selfhost/
   include/dynphony/       shared stage interfaces
@@ -53,10 +59,12 @@ To compile another source through the C compiler image:
 python tools/bootstrap.py path/to/program.c -o build/program.bin
 ```
 
-The compiler image receives the source length as its first `input()`, followed
+For stage 0 only, the compiler image receives the source length as its first `input()`, followed
 by one source byte per `input()`. On success it sends each generated binary byte
 through `output()` and returns status 0. Status 1 is oversized input, 2 is heap
 exhaustion, 4 is syntax/lexing failure, and 5 is an invalid constant expression.
+This temporary transport will be replaced by the persistent DCC1/DCP1/DCO1
+layout in [PROJECT-FORMAT.md](PROJECT-FORMAT.md).
 
 ## Next bootstrap stages
 

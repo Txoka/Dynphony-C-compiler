@@ -21,16 +21,16 @@ bootstrap correctness work.
   translation units, headers, include roots, and preprocessor definitions.
 - [x] Specify DCC1 control plus loader-compatible executable and diagnostic records in
   persistent storage.
-- [ ] Add `selfhost/tools/pack_project.py` to deterministically pack a directory
+- [x] Add `selfhost/tools/pack_project.py` to deterministically pack a directory
   and optional manifest into a persistent image containing DCC1 and DCP1.
-- [ ] Add Python DCC1/DCP1/executable-record codecs and malformed-image tests.
-- [ ] Add emulator CLI options to load and save a persistent image.
-- [ ] Replace stage 0's temporary `input()`/`output()` byte transport: executable
+- [x] Add Python DCC1/DCP1/executable-record codecs and malformed-image tests.
+- [x] Add emulator CLI options to load and save a persistent image.
+- [x] Replace stage 0's temporary `input()`/`output()` byte transport: executable
   `main` must read DCC1/DCP1 with `persistent_load` and write the executable
   record plus final status with `persistent_store`.
-- [ ] Pass DCC1's `program_load_address` through layout and relocation, and test
+- [x] Pass DCC1's `program_load_address` through layout and relocation, and test
   loading generated images at several nonzero RAM addresses.
-- [ ] Introduce `dyn_compile_project(...)` as the device-independent core API;
+- [x] Introduce `dyn_compile_project(...)` as the device-independent core API;
   keep `_start -> main` as the standalone boot path.
 
 The complete storage layout and boot choices are in

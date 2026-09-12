@@ -1,4 +1,4 @@
-# Dynphony compiler in C: stage 0
+# Dynphony compiler in C: stage 0.2
 
 This directory is the start of the self-hosting compiler. Its layout mirrors the
 Python implementation where that separation is already useful:
@@ -16,7 +16,7 @@ selfhost/
   src/middle/             tiny IR lowering and optimization
   src/target/dynphony/    Dynphony image emission
   src/compiler.c          pipeline driver
-  src/main.c              Dynphony input/output protocol
+  src/main.c              Dynphony persistent-storage protocol
   examples/               programs accepted by this stage
   tests/                  bootstrap execution tests
   tools/                  host-side bootstrap driver
@@ -31,12 +31,12 @@ int main(void) {
 }
 ```
 
-The return expression supports decimal, octal, and hexadecimal integer
-constants, parentheses, unary `+ - ~`, and binary `* / % + - << >> & ^ |` with
-C precedence. It rejects division by zero and invalid shift counts. The frontend
-builds an arena-backed AST on the Dynphony heap, the middle end folds it to a
-constant-return IR module, and the backend emits a runnable 16-byte Dynphony
-image.
+The return expression supports integer and character constants, C arithmetic,
+bitwise and comparison precedence, short-circuit logical operators, `?:`, and
+comma expressions. It rejects division by zero and invalid shift counts. The
+frontend builds an arena-backed AST on the Dynphony heap, the middle end folds
+it to a constant-return IR module, and the backend emits a runnable image for
+the requested 32-bit RAM load address.
 
 ## Build and run
 
@@ -53,19 +53,23 @@ make test
 emulator, feeds it `examples/answer.c`, writes `build/answer.bin`, and runs the
 generated program.
 
+`make pack` serializes the entire `selfhost/` source tree into
+`build/selfhost.pstore` using DCC1/DCP1. The compiler CLI can attach such an
+image while emulating with `--persistent-size`, `--persistent-load`, and
+`--persistent-save`.
+
 To compile another source through the C compiler image:
 
 ```sh
 python tools/bootstrap.py path/to/program.c -o build/program.bin
 ```
 
-For stage 0 only, the compiler image receives the source length as its first `input()`, followed
-by one source byte per `input()`. On success it sends each generated binary byte
-through `output()` and returns status 0. Status 1 is oversized input, 2 is heap
-exhaustion, 4 is syntax/lexing failure, and 5 is an invalid constant expression.
-This temporary transport will be replaced by the persistent DCC1/DCP1 and
-loader-compatible executable-record layout in
-[PROJECT-FORMAT.md](PROJECT-FORMAT.md).
+For stage 0.2, the compiler reads one translation unit from DCP1 in persistent
+storage and writes the loader-compatible executable record back there. The
+format and status protocol are specified in
+[PROJECT-FORMAT.md](PROJECT-FORMAT.md). Multi-file records can already be
+packed, but compilation currently rejects bundles containing more than one
+translation unit.
 
 ## Next bootstrap stages
 

@@ -4,7 +4,7 @@ This document describes C accepted **by the compiler in `selfhost/`**, not the
 larger subset accepted by the Python compiler that currently builds it. Every
 new self-hosting language feature should be added here with an execution test.
 
-## Current stage: stage 0
+## Current stage: stage 0.2
 
 Stage 0 accepts exactly one translation unit containing one `main` definition:
 
@@ -21,13 +21,15 @@ or token may appear before or after this definition.
 
 - ASCII whitespace.
 - `//` line comments and `/* ... */` block comments.
-- The keywords `int`, `void`, `main`, and `return`.
-- Decimal, octal, and hexadecimal integer constants without suffixes.
-- Punctuation `(`, `)`, `{`, `}`, and `;`.
-- Operators `+`, `-`, `*`, `/`, `%`, `<<`, `>>`, `&`, `^`, `|`, and `~`.
+- The complete keyword/operator/punctuation vocabulary needed by the planned
+  subset is tokenized, with source offsets and lengths.
+- General identifiers and string literals are tokenized, although the stage-0
+  parser does not consume them yet.
+- Decimal, octal, and hexadecimal integer constants with `u`/`l` suffixes.
+- Character constants and common single-character escapes.
 
-Arbitrary identifiers, character and string literals, integer suffixes, macros,
-and `#include` are not accepted yet.
+Macros and `#include` are not processed yet. String literals and arbitrary
+identifiers currently produce a parse error when used in the stage-0 grammar.
 
 ### Grammar and semantics
 
@@ -36,6 +38,8 @@ and `#include` are not accepted yet.
 - Unary `+`, unary `-`, and bitwise complement `~`.
 - Binary arithmetic, shifts, and bitwise operations with C precedence and
   left associativity.
+- Comparisons, logical negation, short-circuit `&&`/`||`, conditional `?:`, and
+  comma expressions.
 - Values are evaluated as wrapping 32-bit unsigned integers.
 - Division or remainder by zero is rejected.
 - Shift counts greater than or equal to 32 are rejected.
@@ -50,8 +54,9 @@ structures, enums, typedefs, or multiple translation units.
 - Semantic lowering evaluates the expression into a one-value IR module.
 - `dyn_optimize` is currently a no-op; the constant result comes from semantic
   evaluation rather than a general optimization pass.
-- The Dynphony backend emits a fixed 16-byte program that materializes the
-  32-bit result in `r1` and jumps forever at byte offset 12.
+- The Dynphony backend emits a 27-byte program that materializes the 32-bit
+  result in `r1` and halts with a register jump at the requested 32-bit load
+  address.
 - The compiler itself uses `malloc`, `calloc`, and `free` while running, so its
   AST and source buffers exercise the Dynphony heap.
 
@@ -70,9 +75,9 @@ void dyn_emit_image(const struct DynIrModule *);
 int dyn_compile_buffer(const char *, unsigned int);
 ```
 
-The current executable `main` reads one source buffer from the Dynphony input
-device and emits bytes through the output device. This temporary byte protocol
-will be replaced by the project protocol in [PROJECT-FORMAT.md](PROJECT-FORMAT.md).
+The executable `main` reads DCC1 and DCP1 through persistent storage and writes
+a loader-compatible executable record there. This stage accepts exactly one
+translation-unit record; multi-unit preprocessing and linking remain pending.
 
 ## Definition of self-hostable
 

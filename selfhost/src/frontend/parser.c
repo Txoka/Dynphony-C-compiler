@@ -45,7 +45,10 @@ static unsigned int dyn_expression(struct DynParser *parser);
 
 static unsigned int dyn_primary(struct DynParser *parser) {
     unsigned int node;
-    if (parser->lexer.current.kind == DYN_TOK_NUMBER) {
+    if (
+        parser->lexer.current.kind == DYN_TOK_NUMBER
+        || parser->lexer.current.kind == DYN_TOK_CHAR
+    ) {
         node = dyn_new_node(
             parser,
             DYN_NODE_NUMBER,
@@ -74,12 +77,14 @@ static unsigned int dyn_unary(struct DynParser *parser) {
         token != DYN_TOK_PLUS
         && token != DYN_TOK_MINUS
         && token != DYN_TOK_TILDE
+        && token != DYN_TOK_BANG
     ) return dyn_primary(parser);
     dyn_lexer_next(&parser->lexer);
     operand = dyn_unary(parser);
     kind = DYN_NODE_POSITIVE;
     if (token == DYN_TOK_MINUS) kind = DYN_NODE_NEGATIVE;
     else if (token == DYN_TOK_TILDE) kind = DYN_NODE_NOT;
+    else if (token == DYN_TOK_BANG) kind = DYN_NODE_LOGICAL_NOT;
     return dyn_new_node(
         parser, kind, 0, operand, DYN_INVALID_NODE
     );
@@ -144,12 +149,54 @@ static unsigned int dyn_shift(struct DynParser *parser) {
     return left;
 }
 
-static unsigned int dyn_and(struct DynParser *parser) {
+static unsigned int dyn_relational(struct DynParser *parser) {
     unsigned int left = dyn_shift(parser);
-    while (parser->lexer.current.kind == DYN_TOK_AMP) {
+    while (
+        parser->lexer.current.kind == DYN_TOK_LESS
+        || parser->lexer.current.kind == DYN_TOK_GREATER
+        || parser->lexer.current.kind == DYN_TOK_LESS_EQUAL
+        || parser->lexer.current.kind == DYN_TOK_GREATER_EQUAL
+    ) {
+        int token = parser->lexer.current.kind;
+        int kind = DYN_NODE_LESS;
         unsigned int right;
         dyn_lexer_next(&parser->lexer);
         right = dyn_shift(parser);
+        if (token == DYN_TOK_GREATER) kind = DYN_NODE_GREATER;
+        else if (token == DYN_TOK_LESS_EQUAL) kind = DYN_NODE_LESS_EQUAL;
+        else if (token == DYN_TOK_GREATER_EQUAL) kind = DYN_NODE_GREATER_EQUAL;
+        left = dyn_new_node(parser, kind, 0, left, right);
+    }
+    return left;
+}
+
+static unsigned int dyn_equality(struct DynParser *parser) {
+    unsigned int left = dyn_relational(parser);
+    while (
+        parser->lexer.current.kind == DYN_TOK_EQUAL
+        || parser->lexer.current.kind == DYN_TOK_NOT_EQUAL
+    ) {
+        int token = parser->lexer.current.kind;
+        unsigned int right;
+        dyn_lexer_next(&parser->lexer);
+        right = dyn_relational(parser);
+        left = dyn_new_node(
+            parser,
+            token == DYN_TOK_EQUAL ? DYN_NODE_EQUAL : DYN_NODE_NOT_EQUAL,
+            0,
+            left,
+            right
+        );
+    }
+    return left;
+}
+
+static unsigned int dyn_and(struct DynParser *parser) {
+    unsigned int left = dyn_equality(parser);
+    while (parser->lexer.current.kind == DYN_TOK_AMP) {
+        unsigned int right;
+        dyn_lexer_next(&parser->lexer);
+        right = dyn_equality(parser);
         left = dyn_new_node(parser, DYN_NODE_AND, 0, left, right);
     }
     return left;
@@ -166,13 +213,62 @@ static unsigned int dyn_xor(struct DynParser *parser) {
     return left;
 }
 
-static unsigned int dyn_expression(struct DynParser *parser) {
+static unsigned int dyn_bitwise_or(struct DynParser *parser) {
     unsigned int left = dyn_xor(parser);
     while (parser->lexer.current.kind == DYN_TOK_PIPE) {
         unsigned int right;
         dyn_lexer_next(&parser->lexer);
         right = dyn_xor(parser);
         left = dyn_new_node(parser, DYN_NODE_OR, 0, left, right);
+    }
+    return left;
+}
+
+static unsigned int dyn_logical_and(struct DynParser *parser) {
+    unsigned int left = dyn_bitwise_or(parser);
+    while (parser->lexer.current.kind == DYN_TOK_LOGICAL_AND) {
+        unsigned int right;
+        dyn_lexer_next(&parser->lexer);
+        right = dyn_bitwise_or(parser);
+        left = dyn_new_node(parser, DYN_NODE_LOGICAL_AND, 0, left, right);
+    }
+    return left;
+}
+
+static unsigned int dyn_logical_or(struct DynParser *parser) {
+    unsigned int left = dyn_logical_and(parser);
+    while (parser->lexer.current.kind == DYN_TOK_LOGICAL_OR) {
+        unsigned int right;
+        dyn_lexer_next(&parser->lexer);
+        right = dyn_logical_and(parser);
+        left = dyn_new_node(parser, DYN_NODE_LOGICAL_OR, 0, left, right);
+    }
+    return left;
+}
+
+static unsigned int dyn_conditional(struct DynParser *parser) {
+    unsigned int condition = dyn_logical_or(parser);
+    if (parser->lexer.current.kind == DYN_TOK_QUESTION) {
+        unsigned int if_true;
+        unsigned int if_false;
+        dyn_lexer_next(&parser->lexer);
+        if_true = dyn_expression(parser);
+        dyn_take(parser, DYN_TOK_COLON);
+        if_false = dyn_conditional(parser);
+        return dyn_new_node(
+            parser, DYN_NODE_CONDITIONAL, condition, if_true, if_false
+        );
+    }
+    return condition;
+}
+
+static unsigned int dyn_expression(struct DynParser *parser) {
+    unsigned int left = dyn_conditional(parser);
+    while (parser->lexer.current.kind == DYN_TOK_COMMA) {
+        unsigned int right;
+        dyn_lexer_next(&parser->lexer);
+        right = dyn_conditional(parser);
+        left = dyn_new_node(parser, DYN_NODE_COMMA, 0, left, right);
     }
     return left;
 }

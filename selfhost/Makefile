@@ -1,7 +1,7 @@
 PYTHON ?= python
 BUILD_DIR ?= build
 
-.PHONY: all stage0 demo test clean
+.PHONY: all stage0 demo pack test clean
 
 all: stage0
 
@@ -18,8 +18,12 @@ stage0:
 demo:
 	cd .. && $(PYTHON) selfhost/tools/bootstrap.py
 
+pack:
+	cd .. && $(PYTHON) selfhost/tools/pack_project.py selfhost \
+		--exclude examples -o selfhost/$(BUILD_DIR)/selfhost.pstore
+
 test:
-	cd .. && $(PYTHON) -m unittest selfhost.tests.test_bootstrap -v
+	cd .. && $(PYTHON) -m unittest discover -s selfhost/tests -v
 
 clean:
 	rm -rf $(BUILD_DIR)

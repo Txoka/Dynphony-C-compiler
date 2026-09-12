@@ -34,6 +34,14 @@ def main(argv=None):
     p.add_argument("--ram-size", type=number, default=16 * 1024 * 1024)
     p.add_argument("--persistent-size", type=number, default=0)
     p.add_argument(
+        "--persistent-load", type=Path,
+        help="initialize persistent memory from this raw image",
+    )
+    p.add_argument(
+        "--persistent-save", type=Path,
+        help="save persistent memory after emulation",
+    )
+    p.add_argument(
         "--include-framebuffer",
         action="store_true",
         help="serialize the text framebuffer as zero bytes instead of clearing reserved RAM at startup",
@@ -98,6 +106,13 @@ def main(argv=None):
                 address,
                 persistent_size=args.persistent_size,
             )
+            if args.persistent_load:
+                persistent = args.persistent_load.read_bytes()
+                if len(persistent) != args.persistent_size:
+                    raise CompileError(
+                        "persistent input size must equal --persistent-size"
+                    )
+                m.persistent[:] = persistent
             halt = result.image.symbols["_halt"] + (address if args.pic else 0)
             if args.engine == "native" and not native_available():
                 raise CompileError(
@@ -151,10 +166,14 @@ def main(argv=None):
                 if args.hz_meter:
                     show_meter(m)
                     print(flush=True)
+                if args.persistent_save:
+                    args.persistent_save.write_bytes(m.persistent)
             print(
                 f"main returned {signed(value)} (r1=0x{value:08x}); "
                 f"{m.steps} instructions; {engine} engine"
             )
+        elif args.persistent_load or args.persistent_save:
+            raise CompileError("persistent load/save options require --run")
         return 0
     except (CompileError, OSError, RuntimeError, ValueError) as exc:
         print(f"dyncc: {exc}", file=sys.stderr)

@@ -73,15 +73,16 @@ At boot, `main` reads a fixed control block beginning at persistent byte address
 
 ```text
 offset  field
-0x00    magic                 = 0x44434331 (ASCII "DCC1")
-0x04    version               = 1
-0x08    persistent_size       total configured bytes
-0x0c    project_address       address of the DCP1 bundle
+0x00    magic                  = 0x44434331 (ASCII "DCC1")
+0x04    version                = 1
+0x08    persistent_size        total configured bytes
+0x0c    project_address        address of the DCP1 bundle
 0x10    project_byte_length
-0x14    output_address        destination for DCO1
-0x18    output_capacity       available destination bytes
-0x1c    status                host initializes to 0xffffffff
-0x20    output_byte_length    compiler writes actual/required size
+0x14    program_load_address   RAM address for which code is generated
+0x18    output_address         destination executable record
+0x1c    output_capacity        available destination bytes
+0x20    status                 host initializes to 0xffffffff
+0x24    output_byte_length     compiler writes actual/required record size
 ```
 
 The compiler validates alignment, bounds, and that the control block, project,
@@ -91,22 +92,37 @@ data and `output_byte_length`. Writing status last makes completion observable
 without accepting a partially written result. If the output region is too
 small, `output_byte_length` reports the required size.
 
+`program_load_address` participates in symbol layout and relocation exactly like
+the Python compiler's `--load-address`. A loader that places the image at 8192
+must request 8192 here. A future target flag may request PIC output, but the
+first persistent compiler protocol produces a fixed-address image.
+
 ## Compiler output record
 
-Every compilation writes a self-describing DCO1 record at `output_address`:
+On success, `output_address` points directly to the loader-compatible executable
+record:
 
 ```text
-magic                 u32 = 0x44434f31  (ASCII "DCO1")
-version               u32 = 1
-status                u32               (0 = success)
-payload_kind          u32               (1 = binary, 2 = UTF-8 diagnostic)
-payload_byte_length   u32
-payload               packed words, using the blob encoding above
+image_byte_length     u32
+image                 ceil(image_byte_length / 4) packed words
 ```
 
-On success the payload is a flat Dynphony image. On failure it is a diagnostic.
-`main` also returns `status` in `r1` for emulator convenience, but consumers must
-read the persistent control block rather than relying on that register.
+The length is the exact number of meaningful image bytes, excluding final word
+padding. This deliberately has no magic or metadata before the length, so a
+small loader can read one word, copy the following words into RAM, and execute
+them. `output_byte_length` in DCC1 includes the four-byte length prefix and the
+padded image storage.
+
+On failure, the first word is zero, followed by a diagnostic blob:
+
+```text
+zero                  u32 = 0
+diagnostic_length     u32
+diagnostic            ceil(diagnostic_length / 4) packed UTF-8 bytes
+```
+
+The DCC1 `status` distinguishes success from failure and must be checked before
+running the record. `main` also returns it in `r1` for emulator convenience.
 
 ## Running the compiler
 
@@ -119,8 +135,8 @@ read the persistent control block rather than relying on that register.
 4. Attach the preloaded persistent-storage image.
 5. Start execution at the image entry, normally byte address 0.
 6. The generated `_start` initializes the runtime and calls C `main`.
-7. Wait for the DCC1 status field to change from running, then read DCO1 from the
-   persistent output region.
+7. Wait for the DCC1 status field to change from running, then check it and read
+   the executable record from the persistent output region.
 
 Do **not** jump directly to `main` from a cold machine. That bypasses `_start`,
 including stack initialization, static relocation, and other runtime startup.
@@ -134,6 +150,7 @@ core will expose an interface conceptually equivalent to:
 int dyn_compile_project(
     unsigned int project_address,
     unsigned int project_byte_length,
+    unsigned int program_load_address,
     unsigned int output_address,
     unsigned int output_capacity
 );
@@ -145,10 +162,41 @@ resident monitor could later call a separately loaded compiler at a published
 entry address, but that requires a stable binary ABI and symbol/export metadata
 that do not exist yet.
 
+### Loader matching the executable record
+
+The proposed loader reads exactly the record above. With `START = 8192`, DCC1's
+`program_load_address` must also have been 8192:
+
+```text
+pload size, [disk_pointer]       ; exact image byte length
+add disk_pointer, 4
+add end, size, START
+mov pointer, START
+
+copy:
+    pload word, [disk_pointer]
+    store_32 [pointer], word
+    add pointer, 4
+    add disk_pointer, 4
+    cmp pointer, end
+    jl copy
+
+jmp START
+```
+
+The final copy may include up to three zero padding bytes. The loader must only
+be entered after DCC1 reports success, and images are never empty.
+
+Use `jmp START`, rather than `call START`, for an ordinary compiler output. Its
+entry is `_start`: it initializes its own runtime and eventually enters its halt
+loop, so it neither returns to the loader nor executes the loader's saved-register
+epilogue. A later callable-image mode can define a returning entry point and may
+then use `call`.
+
 ### Running a newly compiled program on the same computer
 
-The simplest workflow is compile, copy the DCO1 binary payload from persistent
-storage into program RAM, reset, and boot its `_start`. Running it without
+The simplest workflow is compile, copy the executable record's image from
+persistent storage into program RAM, reset, and boot its `_start`. Running it without
 resetting requires more machinery: the compiler must emit a relocatable/PIC
 image into non-overlapping RAM, and a monitor must copy it from persistent
 storage and transfer control while managing the stack and deciding whether the

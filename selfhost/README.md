@@ -63,8 +63,9 @@ For stage 0 only, the compiler image receives the source length as its first `in
 by one source byte per `input()`. On success it sends each generated binary byte
 through `output()` and returns status 0. Status 1 is oversized input, 2 is heap
 exhaustion, 4 is syntax/lexing failure, and 5 is an invalid constant expression.
-This temporary transport will be replaced by the persistent DCC1/DCP1/DCO1
-layout in [PROJECT-FORMAT.md](PROJECT-FORMAT.md).
+This temporary transport will be replaced by the persistent DCC1/DCP1 and
+loader-compatible executable-record layout in
+[PROJECT-FORMAT.md](PROJECT-FORMAT.md).
 
 ## Next bootstrap stages
 

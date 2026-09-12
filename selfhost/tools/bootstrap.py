@@ -95,7 +95,8 @@ def main():
 
     if not args.no_run:
         program = Machine(binary, load_address=control.program_load_address)
-        result = program.run(control.program_load_address + 24)
+        halt_offset = 12 if len(binary) == 16 else 24
+        result = program.run(control.program_load_address + halt_offset)
         print(f"generated program returned {result} ({program.steps} instructions)")
 
 

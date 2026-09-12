@@ -17,9 +17,9 @@ class BootstrapCompilerTests(unittest.TestCase):
             self.compiler, source.encode("ascii")
         )
         self.assertEqual(status, 0)
-        self.assertEqual(len(binary), 27)
+        self.assertEqual(len(binary), 16)
         program = Machine(binary, load_address=control.program_load_address)
-        self.assertEqual(program.run(control.program_load_address + 24), 52)
+        self.assertEqual(program.run(control.program_load_address + 12), 52)
 
     def test_precedence_literals_unary_and_comments(self):
         source = "int main(void){/* fold */ return ~0 & (0x20 + 010 * 2); }"
@@ -28,7 +28,7 @@ class BootstrapCompilerTests(unittest.TestCase):
         )
         self.assertEqual(status, 0)
         program = Machine(binary, load_address=control.program_load_address)
-        self.assertEqual(program.run(control.program_load_address + 24), 48)
+        self.assertEqual(program.run(control.program_load_address + 12), 48)
 
     def test_reports_parse_and_semantic_errors(self):
         for source, expected in (
@@ -54,7 +54,7 @@ class BootstrapCompilerTests(unittest.TestCase):
         )
         self.assertEqual(status, 0)
         program = Machine(binary, load_address=control.program_load_address)
-        self.assertEqual(program.run(control.program_load_address + 24), 77)
+        self.assertEqual(program.run(control.program_load_address + 12), 77)
 
     def test_generated_image_honors_arbitrary_load_address(self):
         status, compiler, binary, control = run_stage0(
@@ -242,6 +242,68 @@ class BootstrapCompilerTests(unittest.TestCase):
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(), 2)
         self.assertEqual(program.outputs, [5, 2])
+
+    def test_global_scalars_arrays_and_static_data(self):
+        source = b"""static int seed = 7;
+        unsigned int values[4];
+        int update(int index) {
+            values[index] = seed + index;
+            seed += 1;
+            return values[index];
+        }
+        int main(void) {
+            return update(2) + update(1) + values[2] + seed;
+        }"""
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 36)
+
+    def test_string_literal_pooling_escapes_and_concatenation(self):
+        source = b'''int main(void) {
+            char *text = "ab" "c\\n";
+            return text[0] + text[1] + text[2] + text[3];
+        }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 304)
+
+    def test_static_pointer_relocations(self):
+        source = b'''int value = 40;
+        int *pointer = &value;
+        char *text = "az";
+        int main(void) { return *pointer + text[1]; }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 162)
+
+    def test_static_array_initializer_data(self):
+        source = b'''static int values[4] = {10, 20, 30};
+        static char bytes[3] = {1, 2, 255};
+        int main(void) {
+            return values[0] + values[2] + values[3]
+                + bytes[0] + bytes[1] + bytes[2];
+        }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 298)
+
+    def test_scaled_pointer_arithmetic(self):
+        source = b'''int main(void) {
+            int values[4];
+            int *pointer = values;
+            *(pointer + 2) = 40;
+            pointer++;
+            *(pointer + 2) = 2;
+            return values[2] + values[3] + (*(2 + values) - 40);
+        }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 42)
 
 
 if __name__ == "__main__":

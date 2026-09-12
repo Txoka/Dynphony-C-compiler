@@ -1,4 +1,4 @@
-# Dynphony compiler in C: stage 0.8
+# Dynphony compiler in C: stage 0.9
 
 This directory is the start of the self-hosting compiler. Its layout mirrors the
 Python implementation where that separation is already useful:
@@ -73,10 +73,10 @@ translation unit.
 
 The dynamic-code path supports stack-backed scalar locals, assignments, all basic
 loop forms and loop control, runtime arithmetic/comparison/logical expressions,
-and direct `input()`/`output()` calls. Multiplication and unsigned division are
-expanded into software instruction sequences. It is intentionally unoptimized
-and uses correctness-first stack frames. Scalar functions, forward prototypes,
-six register arguments, nested calls, and recursion use the normal Dynphony ABI.
+and direct device intrinsics. Multiplication and unsigned division are expanded
+into software instruction sequences. It is intentionally unoptimized and uses
+correctness-first stack frames. Scalar functions, forward prototypes, six
+register arguments, nested calls, and recursion use the normal Dynphony ABI.
 Aggregate types and stack-passed arguments are subsequent bootstrap layers.
 
 Fixed local arrays now receive byte-accurate frame storage and support decay,
@@ -84,14 +84,16 @@ address-of, dereference, and scaled subscripting. This is the shared lvalue
 foundation for pointers, structures, VLAs, and heap-backed compiler arenas.
 Compound blocks also maintain lexical scope and support local shadowing.
 
-Scalar type spellings, pointer-shaped local declarators, basic casts and
-`sizeof`, and all low-level Dynphony device intrinsics are also accepted. Full
-pointer semantics and scalar conversion rules are not implemented yet.
+Scalar type spellings, pointer declarators, basic casts and `sizeof`, and all
+low-level Dynphony device intrinsics are also accepted. Pointer arithmetic is
+scaled by the pointed-to type. File-scope scalar and fixed-array objects,
+`static`/`extern`, brace array initializers, string literals, and static pointer
+relocations are emitted in an aligned data image after the code.
 
 ## Next bootstrap stages
 
-The next useful increments are declarations and local variables, statements and
-control flow, functions, pointers/arrays/structures, then multiple translation
-units and preprocessing. Once this C implementation accepts all constructs used
-by its own sources, its emitted compiler can compile the same sources again; a
-reproducible stage-1/stage-2 binary comparison will then establish self-hosting.
+The next useful increments are multidimensional arrays and VLAs, structures,
+enums and typedefs, then preprocessing and multiple-translation-unit linking.
+Once this C implementation accepts all constructs used by its own sources, its
+emitted compiler can compile the same sources again; a reproducible
+stage-2/stage-3 binary comparison will then establish self-hosting.

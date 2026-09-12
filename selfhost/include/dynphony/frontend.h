@@ -123,6 +123,7 @@ enum DynNodeKind {
     DYN_NODE_CONDITIONAL,
     DYN_NODE_COMMA,
     DYN_NODE_LOCAL,
+    DYN_NODE_GLOBAL,
     DYN_NODE_ASSIGN,
     DYN_NODE_POST_INCREMENT,
     DYN_NODE_CALL_INPUT,
@@ -171,6 +172,22 @@ struct DynFunction {
     unsigned int frame_size;
 };
 
+struct DynGlobal {
+    unsigned int name_position;
+    unsigned int name_length;
+    unsigned int size;
+    unsigned int element_size;
+    unsigned int count;
+    unsigned int initial_value;
+    unsigned int initializer_node;
+    int array;
+    int pointer;
+    int defined;
+    int internal;
+    char *data;
+    unsigned int data_length;
+};
+
 struct DynAstProgram {
     struct DynNode *nodes;
     unsigned int count;
@@ -184,6 +201,9 @@ struct DynAstProgram {
     unsigned int function_count;
     unsigned int function_capacity;
     unsigned int main_function;
+    struct DynGlobal *globals;
+    unsigned int global_count;
+    unsigned int global_capacity;
 };
 
 void dyn_lexer_init(

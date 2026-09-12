@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "dynphony/frontend.h"
 
 #define DYN_INVALID_NODE 0xffffffffu
@@ -158,8 +159,79 @@ static int dyn_take(struct DynParser *parser, int kind) {
 static unsigned int dyn_expression(struct DynParser *parser);
 static unsigned int dyn_assignment(struct DynParser *parser);
 
+static unsigned int dyn_string_escape(char value) {
+    if (value == 'n') return 10u;
+    if (value == 'r') return 13u;
+    if (value == 't') return 9u;
+    if (value == 'a') return 7u;
+    if (value == 'b') return 8u;
+    if (value == 'f') return 12u;
+    if (value == 'v') return 11u;
+    return (unsigned int)value;
+}
+
+static unsigned int dyn_parse_string(struct DynParser *parser) {
+    struct DynGlobal *global;
+    unsigned int global_index;
+    unsigned int capacity = 1u;
+    unsigned int length = 0;
+    struct DynLexer saved;
+    char *data;
+    dyn_restore_lexer(&saved, &parser->lexer);
+    while (parser->lexer.current.kind == DYN_TOK_STRING) {
+        capacity += parser->lexer.current.length;
+        dyn_lexer_next(&parser->lexer);
+    }
+    data = malloc(capacity);
+    if (!data || parser->program->global_count >= parser->program->global_capacity) {
+        if (data) free(data);
+        parser->error = 1;
+        return DYN_INVALID_NODE;
+    }
+    dyn_restore_lexer(&parser->lexer, &saved);
+    while (parser->lexer.current.kind == DYN_TOK_STRING) {
+        unsigned int position = parser->lexer.current.position + 1u;
+        unsigned int end = parser->lexer.current.position
+            + parser->lexer.current.length - 1u;
+        while (position < end) {
+            unsigned int value;
+            if (parser->program->source[position] == '\\') {
+                position += 1u;
+                value = dyn_string_escape(parser->program->source[position]);
+            } else value = (unsigned int)parser->program->source[position];
+            data[length] = (char)(value & 255u);
+            length += 1u;
+            position += 1u;
+        }
+        dyn_lexer_next(&parser->lexer);
+    }
+    data[length] = 0;
+    length += 1u;
+    global_index = parser->program->global_count;
+    parser->program->global_count += 1u;
+    global = &parser->program->globals[global_index];
+    global->name_position = 0;
+    global->name_length = 0;
+    global->size = 1u;
+    global->element_size = 1u;
+    global->count = length;
+    global->initial_value = 0;
+    global->initializer_node = DYN_INVALID_NODE;
+    global->array = 1;
+    global->pointer = 0;
+    global->defined = 1;
+    global->internal = 1;
+    global->data = data;
+    global->data_length = length;
+    return dyn_new_node(
+        parser, DYN_NODE_GLOBAL, global_index, DYN_INVALID_NODE, 0u
+    );
+}
+
 static unsigned int dyn_primary(struct DynParser *parser) {
     unsigned int node;
+    if (parser->lexer.current.kind == DYN_TOK_STRING)
+        return dyn_parse_string(parser);
     if (
         parser->lexer.current.kind == DYN_TOK_NUMBER
         || parser->lexer.current.kind == DYN_TOK_CHAR
@@ -268,8 +340,13 @@ static unsigned int dyn_primary(struct DynParser *parser) {
         }
         local = dyn_find_local(parser, position, length);
         if (local == DYN_INVALID_NODE) {
-            parser->error = 1;
-            return DYN_INVALID_NODE;
+            node = dyn_new_node(
+                parser, DYN_NODE_GLOBAL, position,
+                DYN_INVALID_NODE, DYN_INVALID_NODE
+            );
+            if (node != DYN_INVALID_NODE)
+                parser->program->nodes[node].extra = length;
+            return node;
         }
         return dyn_new_node(
             parser, DYN_NODE_LOCAL, local,
@@ -667,7 +744,8 @@ static unsigned int dyn_assignment(struct DynParser *parser) {
             left == DYN_INVALID_NODE
             || (parser->program->nodes[left].kind != DYN_NODE_LOCAL
                 && parser->program->nodes[left].kind != DYN_NODE_DEREFERENCE
-                && parser->program->nodes[left].kind != DYN_NODE_SUBSCRIPT)
+                && parser->program->nodes[left].kind != DYN_NODE_SUBSCRIPT
+                && parser->program->nodes[left].kind != DYN_NODE_GLOBAL)
         ) parser->error = 1;
         dyn_lexer_next(&parser->lexer);
         right = dyn_assignment(parser);
@@ -733,6 +811,8 @@ static unsigned int dyn_declaration(struct DynParser *parser) {
         return DYN_INVALID_NODE;
     }
     local = dyn_add_local(parser, size, pointer);
+    if (local != DYN_INVALID_NODE)
+        parser->program->locals[local].element_size = element_size;
     dyn_lexer_next(&parser->lexer);
     if (parser->lexer.current.kind == DYN_TOK_LBRACKET) {
         unsigned int bound;
@@ -886,6 +966,99 @@ static unsigned int dyn_statement(struct DynParser *parser) {
     );
 }
 
+static void dyn_parse_global(
+    struct DynParser *parser,
+    unsigned int name_position,
+    unsigned int name_length,
+    unsigned int size,
+    unsigned int element_size,
+    int pointer,
+    int defined,
+    int internal
+) {
+    struct DynGlobal *global;
+    unsigned int count = 1u;
+    unsigned int initial_value = 0u;
+    unsigned int initializer_node = DYN_INVALID_NODE;
+    char *data = 0;
+    unsigned int data_length = 0;
+    int array = 0;
+    if (parser->program->global_count >= parser->program->global_capacity) {
+        parser->error = 1;
+        return;
+    }
+    if (parser->lexer.current.kind == DYN_TOK_LBRACKET) {
+        unsigned int bound;
+        array = 1;
+        dyn_lexer_next(&parser->lexer);
+        if (parser->lexer.current.kind != DYN_TOK_RBRACKET) {
+            bound = dyn_expression(parser);
+            if (!dyn_evaluate(parser->program, bound, &count) || !count)
+                parser->error = 1;
+        }
+        dyn_take(parser, DYN_TOK_RBRACKET);
+    }
+    if (parser->lexer.current.kind == DYN_TOK_ASSIGN) {
+        unsigned int initializer;
+        dyn_lexer_next(&parser->lexer);
+        if (array && parser->lexer.current.kind == DYN_TOK_LBRACE) {
+            unsigned int item = 0;
+            data_length = element_size * count;
+            data = calloc(data_length, 1u);
+            if (!data) parser->error = 1;
+            dyn_lexer_next(&parser->lexer);
+            while (parser->lexer.current.kind != DYN_TOK_RBRACE
+                && !parser->error) {
+                unsigned int value;
+                unsigned int byte_index = 0;
+                initializer = dyn_assignment(parser);
+                if (item >= count
+                    || !dyn_evaluate(parser->program, initializer, &value)) {
+                    parser->error = 1;
+                    break;
+                }
+                while (byte_index < element_size) {
+                    unsigned int shift = 8u * (element_size - byte_index - 1u);
+                    data[item * element_size + byte_index]
+                        = (char)(value >> shift);
+                    byte_index += 1u;
+                }
+                item += 1u;
+                if (parser->lexer.current.kind != DYN_TOK_COMMA) break;
+                dyn_lexer_next(&parser->lexer);
+                if (parser->lexer.current.kind == DYN_TOK_RBRACE) break;
+            }
+            dyn_take(parser, DYN_TOK_RBRACE);
+        } else {
+            initializer = dyn_assignment(parser);
+            initializer_node = initializer;
+            if (!dyn_evaluate(parser->program, initializer, &initial_value)) {
+                int kind = initializer < parser->program->count
+                    ? parser->program->nodes[initializer].kind : -1;
+                if (kind != DYN_NODE_ADDRESS && kind != DYN_NODE_GLOBAL)
+                    parser->error = 1;
+            }
+        }
+        defined = 1;
+    }
+    dyn_take(parser, DYN_TOK_SEMICOLON);
+    global = &parser->program->globals[parser->program->global_count];
+    parser->program->global_count += 1u;
+    global->name_position = name_position;
+    global->name_length = name_length;
+    global->size = size;
+    global->element_size = element_size;
+    global->count = count;
+    global->initial_value = initial_value;
+    global->initializer_node = initializer_node;
+    global->array = array;
+    global->pointer = pointer;
+    global->defined = defined;
+    global->internal = internal;
+    global->data = data;
+    global->data_length = data_length;
+}
+
 int dyn_parse(
     const char *source,
     unsigned int length,
@@ -901,6 +1074,7 @@ int dyn_parse(
     program->count = 0;
     program->local_count = 0;
     program->function_count = 0;
+    program->global_count = 0;
     program->main_function = DYN_INVALID_NODE;
     program->source = source;
     program->expression = DYN_INVALID_NODE;
@@ -911,14 +1085,26 @@ int dyn_parse(
         unsigned int local_base;
         unsigned int parameter_count = 0;
         unsigned int function_index;
+        unsigned int type_size;
+        unsigned int element_size;
+        int pointer = 0;
+        int external = 0;
+        int internal = 0;
         struct DynFunction *function;
-        while (
-            parser.lexer.current.kind == DYN_TOK_STATIC
-            || parser.lexer.current.kind == DYN_TOK_EXTERN
-        ) dyn_lexer_next(&parser.lexer);
-        if (!dyn_scalar_type(&parser)) { parser.error = 1; break; }
-        while (parser.lexer.current.kind == DYN_TOK_STAR)
+        while (parser.lexer.current.kind == DYN_TOK_STATIC
+            || parser.lexer.current.kind == DYN_TOK_EXTERN) {
+            if (parser.lexer.current.kind == DYN_TOK_STATIC) internal = 1;
+            else external = 1;
             dyn_lexer_next(&parser.lexer);
+        }
+        type_size = dyn_scalar_type(&parser);
+        if (!type_size) { parser.error = 1; break; }
+        element_size = type_size;
+        while (parser.lexer.current.kind == DYN_TOK_STAR) {
+            type_size = 4u;
+            pointer = 1;
+            dyn_lexer_next(&parser.lexer);
+        }
         if (
             parser.lexer.current.kind != DYN_TOK_IDENTIFIER
             && parser.lexer.current.kind != DYN_TOK_MAIN
@@ -926,6 +1112,15 @@ int dyn_parse(
         name_position = parser.lexer.current.position;
         name_length = parser.lexer.current.length;
         dyn_lexer_next(&parser.lexer);
+        if (parser.lexer.current.kind != DYN_TOK_LPAREN) {
+            parser.local_base = program->local_count;
+            parser.scope_depth = 0;
+            dyn_parse_global(
+                &parser, name_position, name_length, type_size,
+                element_size, pointer, !external, internal
+            );
+            continue;
+        }
         dyn_take(&parser, DYN_TOK_LPAREN);
         local_base = program->local_count;
         parser.local_base = local_base;
@@ -1007,6 +1202,27 @@ int dyn_parse(
             }
             if (found == DYN_INVALID_NODE) parser.error = 1;
             else node->value = found;
+        } else if (node->kind == DYN_NODE_GLOBAL
+            && node->right == DYN_INVALID_NODE) {
+            unsigned int candidate = program->global_count;
+            unsigned int found = DYN_INVALID_NODE;
+            while (candidate) {
+                struct DynGlobal *global;
+                candidate -= 1u;
+                global = &program->globals[candidate];
+                if (global->defined && dyn_same_name(
+                    &parser, node->value, node->extra,
+                    global->name_position, global->name_length
+                )) { found = candidate; break; }
+            }
+            if (found == DYN_INVALID_NODE) parser.error = 1;
+            else node->value = found;
+        } else if (node->kind == DYN_NODE_SUBSCRIPT
+            && node->left < program->count
+            && program->nodes[node->left].kind == DYN_NODE_GLOBAL) {
+            unsigned int global_index = program->nodes[node->left].value;
+            if (global_index < program->global_count)
+                node->value = program->globals[global_index].element_size;
         }
         index += 1u;
     }

@@ -4,9 +4,9 @@ This document describes C accepted **by the compiler in `selfhost/`**, not the
 larger subset accepted by the Python compiler that currently builds it. Every
 new self-hosting language feature should be added here with an execution test.
 
-## Current stage: stage 0.8
+## Current stage: stage 0.9
 
-Stage 0.3 accepts exactly one translation unit containing one `main` definition.
+Stage 0.9 accepts exactly one translation unit containing a `main` definition.
 The original constant-return form remains supported:
 
 ```c
@@ -15,8 +15,8 @@ int main(void) {
 }
 ```
 
-`int main()` is accepted as an equivalent spelling. No declaration, statement,
-or token may appear before or after this definition.
+`int main()` is accepted as an equivalent spelling. Function prototypes,
+function definitions, and file-scope object declarations may surround it.
 
 ### Lexical support
 
@@ -24,13 +24,11 @@ or token may appear before or after this definition.
 - `//` line comments and `/* ... */` block comments.
 - The complete keyword/operator/punctuation vocabulary needed by the planned
   subset is tokenized, with source offsets and lengths.
-- General identifiers and string literals are tokenized, although the stage-0
-  parser does not consume them yet.
+- General identifiers and adjacent string literals are tokenized and consumed.
 - Decimal, octal, and hexadecimal integer constants with `u`/`l` suffixes.
 - Character constants and common single-character escapes.
 
-Macros and `#include` are not processed yet. String literals and arbitrary
-identifiers currently produce a parse error when used in the stage-0 grammar.
+Macros and `#include` are not processed yet.
 
 ### Grammar and semantics
 
@@ -64,15 +62,22 @@ The runtime-code path additionally supports:
 - One-dimensional fixed local arrays with constant bounds, array-to-pointer
   decay, address-of, pointer dereference, and scaled subscripting. Array element
   loads and stores honor `char`, `short`, and word widths.
+- File-scope scalar and one-dimensional fixed-array objects, including
+  `static`/`extern` declarations, constant scalar initializers, brace array
+  initializers, and references declared before or after a function.
+- String literals with common escapes and adjacent-literal concatenation.
+- Static pointer initializers that refer to named objects or string literals.
+- Scaled pointer addition, subtraction, increment, and decrement; subtracting
+  compatible pointers returns an element count.
 - Runtime arithmetic (including software multiply/divide/remainder), shifts,
   bitwise operations, comparisons, logical operators, conditional expressions,
   and comma expressions.
 
 Compound statements introduce lexical scopes and inner locals may shadow outer
 locals. Deep expressions that exhaust scratch registers and calls with
-stack-passed arguments are rejected rather than spilled. General pointer
-arithmetic, multidimensional arrays, VLAs, structures, enums, typedefs, globals,
-and multiple translation units remain unsupported.
+stack-passed arguments are rejected rather than spilled. Multidimensional
+arrays, VLAs, structures, unions, enums, typedefs, full scalar conversions,
+designated initializers, and multiple translation units remain unsupported.
 
 ### Pipeline and generated code
 
@@ -81,10 +86,12 @@ and multiple translation units remain unsupported.
   a whole-program constant-return case is still evaluated during bootstrap.
 - `dyn_optimize` is intentionally a no-op.
 - The Dynphony backend emits direct, unoptimized ALU and branch instructions.
-  Constant-return programs remain 27 bytes; dynamic image size depends on the
-  source program.
+  Constant-return programs are 16 bytes when their halt address fits a 16-bit
+  immediate and 27 bytes otherwise; dynamic image size depends on the source.
 - Dynamic images initialize `sp`, call `main` through the normal ABI, and emit
   frame prologues/epilogues and call/return-address fixups.
+- Static objects and pooled strings are appended with alignment after executable
+  code, and address relocations are resolved against the requested load address.
 - The compiler itself uses `malloc`, `calloc`, and `free` while running, so its
   AST and source buffers exercise the Dynphony heap.
 

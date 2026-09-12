@@ -22,6 +22,10 @@ struct DynEmitter {
     unsigned int *call_fixups;
     unsigned int *call_targets;
     unsigned int call_count;
+    unsigned int *global_offsets;
+    unsigned int *global_fixups;
+    unsigned int *global_targets;
+    unsigned int global_fixup_count;
     int error;
 };
 
@@ -70,6 +74,15 @@ static void dyn_constant_at(struct DynEmitter *e, unsigned int position,
     e->position = saved;
 }
 
+static void dyn_write_u32_at(struct DynEmitter *e, unsigned int position,
+                             unsigned int value) {
+    if (position + 4u > e->capacity) { e->error = 1; return; }
+    e->output[position] = (char)(value >> 24);
+    e->output[position + 1u] = (char)(value >> 16);
+    e->output[position + 2u] = (char)(value >> 8);
+    e->output[position + 3u] = (char)value;
+}
+
 static void dyn_constant(struct DynEmitter *e, unsigned int reg,
                          unsigned int value) {
     unsigned int position = e->position;
@@ -106,6 +119,21 @@ static void dyn_local_address(struct DynEmitter *e, unsigned int local,
         dyn_constant(e, destination, offset);
         dyn_alu(e, 0x25u, destination, 12u, destination);
     }
+}
+
+static void dyn_global_address(struct DynEmitter *e, unsigned int global,
+                               unsigned int destination) {
+    unsigned int fixup;
+    if (global >= e->program->global_count
+        || e->global_fixup_count >= e->return_capacity) {
+        e->error = 1; return;
+    }
+    fixup = e->position;
+    dyn_constant(e, 7u, 0u);
+    e->global_fixups[e->global_fixup_count] = fixup;
+    e->global_targets[e->global_fixup_count] = global;
+    e->global_fixup_count += 1u;
+    if (destination != 7u) dyn_move(e, destination, 7u);
 }
 
 static void dyn_call(struct DynEmitter *e, unsigned int function) {
@@ -205,6 +233,8 @@ static void dyn_lvalue_address(struct DynEmitter *e,
     node = &program->nodes[index];
     if (node->kind == DYN_NODE_LOCAL) {
         dyn_local_address(e, node->value, reg);
+    } else if (node->kind == DYN_NODE_GLOBAL) {
+        dyn_global_address(e, node->value, reg);
     } else if (node->kind == DYN_NODE_DEREFERENCE) {
         dyn_expression(e, program, node->left, reg);
     } else if (node->kind == DYN_NODE_SUBSCRIPT) {
@@ -226,9 +256,35 @@ static unsigned int dyn_lvalue_size(const struct DynAstProgram *program,
     const struct DynNode *node = &program->nodes[index];
     if (node->kind == DYN_NODE_LOCAL)
         return program->locals[node->value].size;
+    if (node->kind == DYN_NODE_GLOBAL)
+        return program->globals[node->value].size;
     if (node->kind == DYN_NODE_DEREFERENCE || node->kind == DYN_NODE_SUBSCRIPT)
         return node->value;
     return 4u;
+}
+
+static unsigned int dyn_pointer_element(const struct DynAstProgram *program,
+                                        unsigned int index) {
+    const struct DynNode *node;
+    if (index >= program->count) return 0u;
+    node = &program->nodes[index];
+    if (node->kind == DYN_NODE_LOCAL) {
+        const struct DynLocal *local = &program->locals[node->value];
+        return local->pointer || local->array ? local->element_size : 0u;
+    }
+    if (node->kind == DYN_NODE_GLOBAL) {
+        const struct DynGlobal *global = &program->globals[node->value];
+        return global->pointer || global->array ? global->element_size : 0u;
+    }
+    if (node->kind == DYN_NODE_ADDRESS)
+        return dyn_lvalue_size(program, node->left);
+    if (node->kind == DYN_NODE_ADD) {
+        unsigned int left = dyn_pointer_element(program, node->left);
+        return left ? left : dyn_pointer_element(program, node->right);
+    }
+    if (node->kind == DYN_NODE_SUBTRACT)
+        return dyn_pointer_element(program, node->left);
+    return 0u;
 }
 
 static void dyn_expression(struct DynEmitter *e,
@@ -248,6 +304,15 @@ static void dyn_expression(struct DynEmitter *e,
             dyn_move(e, reg, 7u); return;
         }
         dyn_byte(e, dyn_memory_operation(program->locals[node->value].size, 0));
+        dyn_byte(e, reg << 4); dyn_byte(e, 7u); return;
+    }
+    if (node->kind == DYN_NODE_GLOBAL) {
+        if (node->value >= program->global_count) { e->error = 1; return; }
+        dyn_global_address(e, node->value, 7u);
+        if (program->globals[node->value].array) {
+            dyn_move(e, reg, 7u); return;
+        }
+        dyn_byte(e, dyn_memory_operation(program->globals[node->value].size, 0));
         dyn_byte(e, reg << 4); dyn_byte(e, 7u); return;
     }
     if (node->kind == DYN_NODE_CALL_INPUT) {
@@ -312,7 +377,8 @@ static void dyn_expression(struct DynEmitter *e,
         if (node->left >= program->count
             || (program->nodes[node->left].kind != DYN_NODE_LOCAL
                 && program->nodes[node->left].kind != DYN_NODE_DEREFERENCE
-                && program->nodes[node->left].kind != DYN_NODE_SUBSCRIPT))
+                && program->nodes[node->left].kind != DYN_NODE_SUBSCRIPT
+                && program->nodes[node->left].kind != DYN_NODE_GLOBAL))
             e->error = 1;
         else {
             dyn_push(e, reg);
@@ -342,7 +408,9 @@ static void dyn_expression(struct DynEmitter *e,
         local = program->nodes[node->left].value;
         dyn_expression(e, program, node->left, reg);
         dyn_alu_immediate(
-            e, node->value ? 0x24u : 0x25u, temporary, reg, 1u
+            e, node->value ? 0x24u : 0x25u, temporary, reg,
+            program->locals[local].pointer
+                ? program->locals[local].element_size : 1u
         );
         dyn_local_address(e, local, 7u);
         dyn_byte(e, dyn_memory_operation(program->locals[local].size, 1));
@@ -384,6 +452,25 @@ static void dyn_expression(struct DynEmitter *e,
     dyn_push(e, reg);
     dyn_expression(e, program, node->right, reg + 1u);
     dyn_pop(e, reg);
+    if (node->kind == DYN_NODE_ADD || node->kind == DYN_NODE_SUBTRACT) {
+        unsigned int scale = dyn_pointer_element(program, node->left);
+        unsigned int right_scale = dyn_pointer_element(program, node->right);
+        if (scale && right_scale && node->kind == DYN_NODE_ADD)
+            e->error = 1;
+        else if (!scale && right_scale && node->kind == DYN_NODE_SUBTRACT)
+            e->error = 1;
+        else if (!right_scale && scale == 2u)
+            dyn_alu_immediate(e, 0x27u, reg + 1u, reg + 1u, 1u);
+        else if (!right_scale && scale == 4u)
+            dyn_alu_immediate(e, 0x27u, reg + 1u, reg + 1u, 2u);
+        else if (!right_scale && scale != 0u && scale != 1u) e->error = 1;
+        else if (!scale && right_scale == 2u)
+            dyn_alu_immediate(e, 0x27u, reg, reg, 1u);
+        else if (!scale && right_scale == 4u)
+            dyn_alu_immediate(e, 0x27u, reg, reg, 2u);
+        else if (!scale && right_scale != 0u && right_scale != 1u)
+            e->error = 1;
+    }
     if (node->kind == DYN_NODE_MULTIPLY) { dyn_multiply(e, reg); return; }
     if (node->kind == DYN_NODE_DIVIDE) { dyn_divide(e, reg, 0); return; }
     if (node->kind == DYN_NODE_REMAINDER) { dyn_divide(e, reg, 1); return; }
@@ -394,7 +481,18 @@ static void dyn_expression(struct DynEmitter *e,
     else if (node->kind == DYN_NODE_AND) operation = 0x22u;
     else if (node->kind == DYN_NODE_OR) operation = 0x21u;
     else if (node->kind == DYN_NODE_XOR) operation = 0x26u;
-    if (operation) { dyn_alu(e, operation, reg, reg, reg + 1u); return; }
+    if (operation) {
+        dyn_alu(e, operation, reg, reg, reg + 1u);
+        if (node->kind == DYN_NODE_SUBTRACT
+            && dyn_pointer_element(program, node->left)
+            && dyn_pointer_element(program, node->right)) {
+            unsigned int scale = dyn_pointer_element(program, node->left);
+            if (scale == 2u) dyn_alu_immediate(e, 0x28u, reg, reg, 1u);
+            else if (scale == 4u) dyn_alu_immediate(e, 0x28u, reg, reg, 2u);
+            else if (scale != 1u) e->error = 1;
+        }
+        return;
+    }
     dyn_byte(e, 0x2au); dyn_byte(e, reg); dyn_byte(e, reg + 1u);
     if (node->kind == DYN_NODE_EQUAL) operation = 0x41u;
     else if (node->kind == DYN_NODE_NOT_EQUAL) operation = 0x49u;
@@ -521,15 +619,28 @@ int dyn_emit_image(const struct DynIrModule *module, unsigned int load_address,
     );
     e.call_fixups = calloc(e.return_capacity, sizeof(unsigned int));
     e.call_targets = calloc(e.return_capacity, sizeof(unsigned int));
+    e.global_offsets = calloc(
+        module->program->global_count + 1u, sizeof(unsigned int)
+    );
+    e.global_fixups = calloc(e.return_capacity, sizeof(unsigned int));
+    e.global_targets = calloc(e.return_capacity, sizeof(unsigned int));
     e.return_count = 0; e.break_count = 0; e.continue_count = 0;
-    e.call_count = 0; e.loop_depth = 0; e.current_local_base = 0;
+    e.call_count = 0; e.global_fixup_count = 0;
+    e.loop_depth = 0; e.current_local_base = 0;
     e.error = e.returns && e.breaks && e.continues && e.function_offsets
-        && e.call_fixups && e.call_targets ? 0 : 1;
+        && e.call_fixups && e.call_targets && e.global_offsets
+        && e.global_fixups && e.global_targets ? 0 : 1;
     if (module->constant) {
         dyn_constant(&e, 1u, module->return_value);
-        dyn_constant(&e, 7u, load_address + 24u);
-        dyn_byte(&e, 0x48u); dyn_byte(&e, 0x0fu); dyn_byte(&e, 0x07u);
+        if (load_address + 12u <= 65535u) {
+            dyn_byte(&e, 0x58u); dyn_byte(&e, 0x0fu);
+            dyn_u16(&e, load_address + 12u);
+        } else {
+            dyn_constant(&e, 7u, load_address + 24u);
+            dyn_byte(&e, 0x48u); dyn_byte(&e, 0x0fu); dyn_byte(&e, 0x07u);
+        }
         *length = e.position;
+        free(e.global_targets); free(e.global_fixups); free(e.global_offsets);
         free(e.call_targets); free(e.call_fixups); free(e.function_offsets);
         free(e.continues); free(e.breaks); free(e.returns);
         return e.error ? 0 : 1;
@@ -594,7 +705,62 @@ int dyn_emit_image(const struct DynIrModule *module, unsigned int load_address,
         );
         index += 1u;
     }
+    index = 0;
+    while (index < module->program->global_count) {
+        const struct DynGlobal *global = &module->program->globals[index];
+        unsigned int bytes;
+        unsigned int written = 0;
+        if (!global->defined) { index += 1u; continue; }
+        while (global->size > 1u && (e.position & (global->size - 1u)))
+            dyn_byte(&e, 0u);
+        e.global_offsets[index] = e.position;
+        bytes = global->array ? global->element_size * global->count : global->size;
+        while (written < bytes) {
+            unsigned int value = global->data
+                ? ((unsigned int)global->data[written]) & 255u
+                : global->array ? 0u : global->initial_value;
+            if (global->data) {
+                dyn_byte(&e, value);
+                written += 1u;
+                continue;
+            }
+            unsigned int shift = 8u * (global->size - 1u - (written % global->size));
+            dyn_byte(&e, value >> shift);
+            written += 1u;
+        }
+        index += 1u;
+    }
+    index = 0;
+    while (index < module->program->global_count) {
+        const struct DynGlobal *global = &module->program->globals[index];
+        if (global->defined && global->pointer
+            && global->initializer_node != DYN_INVALID_NODE) {
+            unsigned int node_index = global->initializer_node;
+            const struct DynNode *node = &module->program->nodes[node_index];
+            if (node->kind == DYN_NODE_ADDRESS) {
+                node_index = node->left;
+                node = &module->program->nodes[node_index];
+            }
+            if (node->kind != DYN_NODE_GLOBAL
+                || node->value >= module->program->global_count)
+                e.error = 1;
+            else dyn_write_u32_at(
+                &e, e.global_offsets[index],
+                load_address + e.global_offsets[node->value]
+            );
+        }
+        index += 1u;
+    }
+    index = 0;
+    while (index < e.global_fixup_count) {
+        dyn_constant_at(
+            &e, e.global_fixups[index], 7u,
+            load_address + e.global_offsets[e.global_targets[index]]
+        );
+        index += 1u;
+    }
     *length = e.position;
+    free(e.global_targets); free(e.global_fixups); free(e.global_offsets);
     free(e.call_targets); free(e.call_fixups); free(e.function_offsets);
     free(e.continues); free(e.breaks); free(e.returns);
     return e.error ? 0 : 1;

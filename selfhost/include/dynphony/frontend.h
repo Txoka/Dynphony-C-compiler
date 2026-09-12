@@ -188,6 +188,12 @@ struct DynGlobal {
     unsigned int data_length;
 };
 
+struct DynConstant {
+    unsigned int name_position;
+    unsigned int name_length;
+    unsigned int value;
+};
+
 struct DynAstProgram {
     struct DynNode *nodes;
     unsigned int count;
@@ -204,6 +210,9 @@ struct DynAstProgram {
     struct DynGlobal *globals;
     unsigned int global_count;
     unsigned int global_capacity;
+    struct DynConstant *constants;
+    unsigned int constant_count;
+    unsigned int constant_capacity;
 };
 
 void dyn_lexer_init(

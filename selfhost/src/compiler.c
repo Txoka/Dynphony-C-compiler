@@ -129,10 +129,19 @@ int dyn_compile_buffer(
         free(program.nodes);
         return DYN_COMPILE_OUT_OF_MEMORY;
     }
+    program.constants = calloc(capacity, sizeof(struct DynConstant));
+    if (!program.constants) {
+        free(program.globals);
+        free(program.functions);
+        free(program.locals);
+        free(program.nodes);
+        return DYN_COMPILE_OUT_OF_MEMORY;
+    }
     program.capacity = capacity;
     program.local_capacity = capacity;
     program.function_capacity = capacity;
     program.global_capacity = capacity;
+    program.constant_capacity = capacity;
 
     if (!dyn_parse(source, length, &program))
         status = DYN_COMPILE_PARSE_ERROR;
@@ -152,6 +161,7 @@ int dyn_compile_buffer(
             global_index += 1u;
         }
     }
+    free(program.constants);
     free(program.globals);
     free(program.functions);
     free(program.locals);

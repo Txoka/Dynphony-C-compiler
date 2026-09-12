@@ -34,6 +34,7 @@ class BootstrapCompilerTests(unittest.TestCase):
         for source, expected in (
             ("int main(void){return nope;}", 4),
             ("int main(void){return 1/0;}", 5),
+            ("enum Bad { SAME, SAME }; int main(void){return 0;}", 4),
         ):
             with self.subTest(source=source):
                 status, compiler, binary, control = run_stage0(
@@ -304,6 +305,22 @@ class BootstrapCompilerTests(unittest.TestCase):
         self.assertEqual(status, 0)
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(), 42)
+
+    def test_enum_definitions_and_constant_expressions(self):
+        source = b'''enum Token {
+            TOKEN_ZERO,
+            TOKEN_START = 7,
+            TOKEN_NEXT,
+            TOKEN_MASK = (TOKEN_NEXT << 2) | 1,
+        };
+        int main(void) {
+            int value = TOKEN_MASK;
+            return TOKEN_ZERO + TOKEN_START + TOKEN_NEXT + value;
+        }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 48)
 
 
 if __name__ == "__main__":

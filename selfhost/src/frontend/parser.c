@@ -108,6 +108,32 @@ static unsigned int dyn_find_local(
     );
 }
 
+static unsigned int dyn_find_constant_from(
+    const struct DynParser *parser,
+    unsigned int position,
+    unsigned int length,
+    unsigned int index
+) {
+    const struct DynConstant *constant;
+    if (!index) return DYN_INVALID_NODE;
+    index -= 1u;
+    constant = &parser->program->constants[index];
+    if (dyn_same_name(
+        parser, constant->name_position, constant->name_length, position, length
+    )) return index;
+    return dyn_find_constant_from(parser, position, length, index);
+}
+
+static unsigned int dyn_find_constant(
+    const struct DynParser *parser,
+    unsigned int position,
+    unsigned int length
+) {
+    return dyn_find_constant_from(
+        parser, position, length, parser->program->constant_count
+    );
+}
+
 static unsigned int dyn_add_local(
     struct DynParser *parser,
     unsigned int size,
@@ -340,6 +366,13 @@ static unsigned int dyn_primary(struct DynParser *parser) {
         }
         local = dyn_find_local(parser, position, length);
         if (local == DYN_INVALID_NODE) {
+            unsigned int constant = dyn_find_constant(parser, position, length);
+            if (constant != DYN_INVALID_NODE)
+                return dyn_new_node(
+                    parser, DYN_NODE_NUMBER,
+                    parser->program->constants[constant].value,
+                    DYN_INVALID_NODE, DYN_INVALID_NODE
+                );
             node = dyn_new_node(
                 parser, DYN_NODE_GLOBAL, position,
                 DYN_INVALID_NODE, DYN_INVALID_NODE
@@ -1059,6 +1092,55 @@ static void dyn_parse_global(
     global->data_length = data_length;
 }
 
+static void dyn_parse_enum(struct DynParser *parser) {
+    unsigned int next_value = 0u;
+    dyn_take(parser, DYN_TOK_ENUM);
+    if (parser->lexer.current.kind == DYN_TOK_IDENTIFIER)
+        dyn_lexer_next(&parser->lexer);
+    if (!dyn_take(parser, DYN_TOK_LBRACE)) return;
+    while (parser->lexer.current.kind != DYN_TOK_RBRACE && !parser->error) {
+        struct DynConstant *constant;
+        unsigned int existing;
+        unsigned int position;
+        unsigned int length;
+        unsigned int value = next_value;
+        if (parser->lexer.current.kind != DYN_TOK_IDENTIFIER) {
+            parser->error = 1;
+            break;
+        }
+        position = parser->lexer.current.position;
+        length = parser->lexer.current.length;
+        existing = dyn_find_constant(parser, position, length);
+        if (existing != DYN_INVALID_NODE
+            || parser->program->constant_count
+                >= parser->program->constant_capacity) {
+            parser->error = 1;
+            break;
+        }
+        dyn_lexer_next(&parser->lexer);
+        if (parser->lexer.current.kind == DYN_TOK_ASSIGN) {
+            unsigned int expression;
+            dyn_lexer_next(&parser->lexer);
+            expression = dyn_assignment(parser);
+            if (!dyn_evaluate(parser->program, expression, &value)) {
+                parser->error = 1;
+                break;
+            }
+        }
+        constant = &parser->program->constants[parser->program->constant_count];
+        parser->program->constant_count += 1u;
+        constant->name_position = position;
+        constant->name_length = length;
+        constant->value = value;
+        next_value = value + 1u;
+        if (parser->lexer.current.kind != DYN_TOK_COMMA) break;
+        dyn_lexer_next(&parser->lexer);
+        if (parser->lexer.current.kind == DYN_TOK_RBRACE) break;
+    }
+    dyn_take(parser, DYN_TOK_RBRACE);
+    dyn_take(parser, DYN_TOK_SEMICOLON);
+}
+
 int dyn_parse(
     const char *source,
     unsigned int length,
@@ -1075,6 +1157,7 @@ int dyn_parse(
     program->local_count = 0;
     program->function_count = 0;
     program->global_count = 0;
+    program->constant_count = 0;
     program->main_function = DYN_INVALID_NODE;
     program->source = source;
     program->expression = DYN_INVALID_NODE;
@@ -1091,6 +1174,10 @@ int dyn_parse(
         int external = 0;
         int internal = 0;
         struct DynFunction *function;
+        if (parser.lexer.current.kind == DYN_TOK_ENUM) {
+            dyn_parse_enum(&parser);
+            continue;
+        }
         while (parser.lexer.current.kind == DYN_TOK_STATIC
             || parser.lexer.current.kind == DYN_TOK_EXTERN) {
             if (parser.lexer.current.kind == DYN_TOK_STATIC) internal = 1;

@@ -31,14 +31,31 @@ BUILTIN_HEADERS = {
         "typedef int int32_t; typedef unsigned int uint32_t;\n"
     ),
     "stdlib.h": (
-        "#pragma once\nvoid *malloc(unsigned int); void free(void *); "
-        "void *calloc(unsigned int,unsigned int); void *realloc(void *,unsigned int);\n"
+        "#pragma once\n#include <stddef.h>\n"
+        "void *malloc(size_t); void free(void *); "
+        "void *calloc(size_t,size_t); void *realloc(void *,size_t);\n"
     ),
     "string.h": (
-        "#pragma once\nvoid *memcpy(void *,const void *,unsigned int); "
-        "void *memmove(void *,const void *,unsigned int); "
-        "void *memset(void *,int,unsigned int); "
-        "int memcmp(const void *,const void *,unsigned int);\n"
+        "#pragma once\n#include <stddef.h>\n"
+        "void *memcpy(void *,const void *,size_t); "
+        "void *memmove(void *,const void *,size_t); "
+        "void *memset(void *,int,size_t); "
+        "int memcmp(const void *,const void *,size_t);\n"
+    ),
+    "stdio.h": (
+        "#pragma once\nint printf(const char *format);\n"
+    ),
+    "dynphony.h": (
+        "#pragma once\n"
+        "unsigned int input(void); void output(unsigned int); "
+        "unsigned int keyboard(void); "
+        "void screen(unsigned int,unsigned int); "
+        "unsigned int time(void); unsigned int time_low(void); "
+        "unsigned int time_high(void); "
+        "unsigned int persistent_load(unsigned int); "
+        "void persistent_store(unsigned int,unsigned int); "
+        "char *screen_framebuffer(void); "
+        "void screen_cursor(unsigned int,unsigned int);\n"
     ),
 }
 

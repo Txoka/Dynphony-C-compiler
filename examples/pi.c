@@ -1,4 +1,4 @@
-int printf(char *s);
+#include <stdio.h>
 
 const unsigned int N = 402;
 

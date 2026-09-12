@@ -8,11 +8,20 @@ in test_compiler.py; these tests protect the boundaries between compiler stages.
 import unittest
 from pathlib import Path
 
-from dynphony import Target, compile_source, compile_sources
+from dynphony import Target, compile_source as _compile_source, compile_sources
 from dynphony.emulator import Machine, native_available, native_run
 
 
 ROOT = Path(__file__).resolve().parents[1]
+TEST_PREAMBLE = """#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <dynphony.h>
+"""
+
+
+def compile_source(source, filename="<input>", target=None):
+    return _compile_source(TEST_PREAMBLE + source, filename, target)
 
 
 def compile_and_run(source, expected, *, target=None, load_address=0, inputs=()):

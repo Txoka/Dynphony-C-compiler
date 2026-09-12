@@ -1,8 +1,8 @@
 # Validation record
 
-Validated in the development environment on 2026-09-11 with Python 3.13 and pycparser 2.22.
+Validated in the development environment on 2026-09-12 with Python 3.13 and pycparser 2.22.
 
-- `python -m unittest discover -s tests -v`: **70 test methods passed**, including package boundaries, preprocessing, multi-translation-unit and internal linkage, multidimensional VLA strides and runtime `sizeof`, VLA overflow/collision trapping, named registers and ABI roles, canonical lowering, `_Bool`/`bool` conversions, literal-format `printf`, structures, enums, `const`, register and stack-passed arguments, the free-list allocator and memory functions, optimization passes, device intrinsics, and fixed/PIC termination.
+- `python -m unittest discover -s tests -v`: **72 test methods passed**, including package boundaries, explicit standard/Dynphony header visibility, preprocessing, multi-translation-unit and internal linkage, multidimensional VLA strides and runtime `sizeof`, VLA overflow/collision trapping, named registers and ABI roles, canonical lowering, `_Bool`/`bool` conversions, literal-format `printf`, structures, enums, `const`, register and stack-passed arguments, the free-list allocator and memory functions, optimization passes, device intrinsics, and fixed/PIC termination.
 - Native C emulator build (`make native`) and differential execution against the
   Python reference: passed on x86-64 Linux with CPython 3.13. Native execution of
   the `pi.c` workload measured approximately **239 MHz**, versus approximately

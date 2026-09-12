@@ -1,3 +1,7 @@
+#include <dynphony.h>
+#include <stdlib.h>
+#include <string.h>
+
 /*
  * Dynamic sensor report demo.
  *

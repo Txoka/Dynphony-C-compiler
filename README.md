@@ -109,8 +109,8 @@ are documented in [docs/c-language-support.md](docs/c-language-support.md).
 - Fixed-size and multidimensional arrays, inferred outer array bounds, brace/string initializers, array indexing/decay, pointer scaling/difference, dereference, and address-of.
 - Zero-filled globals, partially initialized arrays, integer constant initializers, and symbolic pointer initializers such as `int *p = &a[2]`.
 - Software multiplication and signed/unsigned division/remainder. Division is bounded to 32 iterations, including for large unsigned divisors.
-- Header-free built-in functions for dynamic memory, bytewise memory operations,
-  Dynphony I/O, time, and persistent memory.
+- Freestanding library declarations through `stdio.h`, `stdlib.h`, and
+  `string.h`, plus Dynphony device extensions through `dynphony.h`.
 
 Entry must be `int main(void)` or `int main()`. In this version, an empty parameter list is treated as exactly zero parameters. Falling off `main` returns zero. Other non-void functions also get a deterministic zero fallthrough, although callers must not rely on this for portable C.
 
@@ -140,13 +140,14 @@ Large constants and all label addresses use fixed-width materialization, avoidin
 
 RAM size participates in layout diagnostics and emulator configuration. Persistent size is validated and recorded in the map. It does not partition main RAM into persistent and volatile regions.
 
-## Built-in device functions
+## Dynphony device functions
 
-These functions are always declared by the compiler. Source files do not need a
-header, and each call emits the matching Dynphony instruction without ordinary
-function-call overhead:
+Include `<dynphony.h>` to declare the target-specific API. Each call emits the
+matching Dynphony instruction without ordinary function-call overhead:
 
 ```c
+#include <dynphony.h>
+
 unsigned int input(void);                         /* in */
 void output(unsigned int value);                  /* out */
 unsigned int keyboard(void);                      /* keyboard */
@@ -186,7 +187,8 @@ This is a C subset compiler, not a conforming full C implementation. Unsupported
   conditional compilation, `#undef`, `#pragma once`, and `#error`. Macro
   stringification, token pasting, variadic macros, and a hosted standard library
   remain unsupported. Minimal freestanding `stdbool.h`, `stddef.h`, `stdint.h`,
-  `stdlib.h`, and `string.h` headers are provided.
+  `stdio.h`, `stdlib.h`, and `string.h` headers are provided, along with the
+  target-specific `dynphony.h`.
 - Multiple source translation units link directly into one optimized flat image.
   Serializable object files, archives, dynamic linking, and incremental linking
   are not yet implemented.

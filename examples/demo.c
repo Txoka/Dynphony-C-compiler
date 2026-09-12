@@ -1,3 +1,5 @@
+#include <stdio.h>
+
 int values[] = {3, 5, 7, 11};
 int *start = values;
 

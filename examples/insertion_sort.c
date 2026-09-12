@@ -1,5 +1,6 @@
 /* Read exactly 16 bytes, sort them, and output them in ascending order. */
 
+#include <dynphony.h>
 
 int main(void) {
     int index;

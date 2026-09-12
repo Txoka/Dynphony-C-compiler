@@ -131,10 +131,7 @@ class CFrontend:
                 raise CompileError(
                     "identifiers beginning __dyn_ are reserved for the runtime"
                 )
-            parsed = parse(
-                "typedef _Bool bool;\n" + PROTOTYPES + LIBRARY_PROTOTYPES + processed,
-                filename,
-            )
+            parsed = parse(processed, filename)
             parsed_units.append(parsed)
             programs.append(typecheck(parsed, require_main=False, namespace=str(index)))
         for parsed in parsed_units:

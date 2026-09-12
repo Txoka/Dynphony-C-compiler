@@ -7,7 +7,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from dynphony import CompileError, Target, compile_source, compile_sources
+from dynphony import (
+    CompileError,
+    Target,
+    compile_source as _compile_source,
+    compile_sources,
+)
 from dynphony.emulator import Machine, signed
 from dynphony.frontend import parse, typecheck
 from dynphony.ir import lower
@@ -15,6 +20,17 @@ from dynphony import isa
 from dynphony.targets.dynphony.abi import ABI
 
 ROOT = Path(__file__).resolve().parents[1]
+TEST_PREAMBLE = """#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <dynphony.h>
+"""
+
+
+def compile_source(source, filename="<input>", target=None):
+    """Compile old focused snippets with their library dependencies declared."""
+    return _compile_source(TEST_PREAMBLE + source, filename, target)
 
 
 def run(
@@ -685,6 +701,31 @@ class ExecutionTests(unittest.TestCase):
 
 
 class DiagnosticTests(unittest.TestCase):
+    def test_library_and_platform_names_require_headers(self):
+        cases = [
+            ("int main(void){return malloc(4)==0;}", "malloc"),
+            ("int main(void){char x; memset(&x,0,1); return x;}", "memset"),
+            ('int main(void){printf("x");return 0;}', "printf"),
+            ("int main(void){return input();}", "input"),
+            ("int main(void){bool value=1;return value;}", "before"),
+        ]
+        for source, name in cases:
+            with self.subTest(name=name), self.assertRaisesRegex(CompileError, name):
+                _compile_source(source)
+
+        accepted = """#include <stdbool.h>
+            #include <stdio.h>
+            #include <stdlib.h>
+            #include <string.h>
+            #include <dynphony.h>
+            int main(void){
+                bool ok=1; char *p=malloc(1); memset(p,0,1);
+                output(*p); printf("%d",ok); free(p); return input()+ok;
+            }"""
+        result = _compile_source(accepted)
+        machine = Machine(result.image.binary, inputs=[41])
+        self.assertEqual(machine.run(result.image.symbols["_halt"]), 42)
+
     def test_rejections(self):
         cases = [
             ("int main(void){return missing;}", "undeclared"),

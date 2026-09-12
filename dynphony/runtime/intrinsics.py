@@ -22,7 +22,7 @@ void *malloc(unsigned int size);
 void free(void *pointer);
 void *calloc(unsigned int count, unsigned int size);
 void *realloc(void *pointer, unsigned int size);
-int printf(char *format);
+int printf(const char *format);
 char *screen_framebuffer(void);
 void screen_cursor(unsigned int x, unsigned int y);
 """

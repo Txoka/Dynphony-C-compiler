@@ -649,6 +649,10 @@ class Frontend:
             return self.node(s, "assign", a.type, [a, b])
         if isinstance(s, c.FuncCall):
             if isinstance(s.name, c.ID) and s.name.name == "printf":
+                # printf is compiler-lowered, but it is still an ordinary C
+                # library name and must have been declared (normally by
+                # <stdio.h>) before use.
+                self.lookup(s.name)
                 return self.printf(s)
             fn = self.value(self.expr(s.name))
             if fn.type.kind != "pointer" or fn.type.base.kind != "function":

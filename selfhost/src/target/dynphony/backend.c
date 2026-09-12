@@ -1,3 +1,4 @@
+#include <dynphony.h>
 #include "dynphony/target.h"
 
 static void dyn_emit_byte(unsigned int value) {

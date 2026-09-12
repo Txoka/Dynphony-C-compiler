@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <dynphony.h>
 #include "dynphony/compiler.h"
 
 int main(void) {

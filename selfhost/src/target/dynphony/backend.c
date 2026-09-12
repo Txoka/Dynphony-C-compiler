@@ -162,6 +162,27 @@ static void dyn_expression(struct DynEmitter *e,
         dyn_byte(e, 0x02u); dyn_byte(e, 0u); dyn_byte(e, reg);
         dyn_constant(e, reg, 0u); return;
     }
+    if (node->kind == DYN_NODE_CALL_INTRINSIC) {
+        if (node->value == 1u) {
+            dyn_byte(e, 0x03u); dyn_byte(e, reg << 4);
+        } else if (node->value == 2u || node->value == 3u) {
+            dyn_byte(e, node->value == 2u ? 0x05u : 0x06u);
+            dyn_byte(e, reg << 4);
+        } else if (node->value == 5u) {
+            dyn_expression(e, program, node->left, reg);
+            dyn_byte(e, 0x63u); dyn_byte(e, reg << 4); dyn_byte(e, reg);
+        } else if (node->value == 4u || node->value == 6u) {
+            dyn_expression(e, program, node->left, reg);
+            dyn_expression(e, program, node->right, reg + 1u);
+            if (node->value == 4u) {
+                dyn_byte(e, 0x04u); dyn_byte(e, reg); dyn_byte(e, reg + 1u);
+            } else {
+                dyn_byte(e, 0x67u); dyn_byte(e, reg + 1u); dyn_byte(e, reg);
+            }
+            dyn_constant(e, reg, 0u);
+        } else e->error = 1;
+        return;
+    }
     if (node->kind == DYN_NODE_ASSIGN) {
         dyn_expression(e, program, node->right, reg);
         if (node->left >= program->count

@@ -8,6 +8,20 @@ struct DynParser {
     int error;
 };
 
+static void dyn_restore_lexer(
+    struct DynLexer *destination,
+    const struct DynLexer *source
+) {
+    destination->source = source->source;
+    destination->length = source->length;
+    destination->position = source->position;
+    destination->current.kind = source->current.kind;
+    destination->current.value = source->current.value;
+    destination->current.position = source->current.position;
+    destination->current.length = source->current.length;
+    destination->error = source->error;
+}
+
 static unsigned int dyn_new_node(
     struct DynParser *parser,
     int kind,
@@ -81,7 +95,7 @@ static unsigned int dyn_find_local(
     return DYN_INVALID_NODE;
 }
 
-static unsigned int dyn_add_local(struct DynParser *parser) {
+static unsigned int dyn_add_local(struct DynParser *parser, unsigned int size) {
     unsigned int index;
     struct DynLocal *local;
     if (parser->program->local_count >= parser->program->local_capacity) {
@@ -92,6 +106,7 @@ static unsigned int dyn_add_local(struct DynParser *parser) {
     local = &parser->program->locals[index];
     local->position = parser->lexer.current.position;
     local->length = parser->lexer.current.length;
+    local->size = size;
     if (dyn_find_local(
         parser, local->position, local->length
     ) != DYN_INVALID_NODE) {
@@ -113,6 +128,7 @@ static int dyn_take(struct DynParser *parser, int kind) {
 }
 
 static unsigned int dyn_expression(struct DynParser *parser);
+static unsigned int dyn_assignment(struct DynParser *parser);
 
 static unsigned int dyn_primary(struct DynParser *parser) {
     unsigned int node;
@@ -159,6 +175,38 @@ static unsigned int dyn_primary(struct DynParser *parser) {
                 node, DYN_INVALID_NODE
             );
         }
+        if (dyn_token_word(parser, "keyboard")
+            || dyn_token_word(parser, "time")
+            || dyn_token_word(parser, "time_low")
+            || dyn_token_word(parser, "time_high")
+            || dyn_token_word(parser, "screen")
+            || dyn_token_word(parser, "persistent_load")
+            || dyn_token_word(parser, "persistent_store")) {
+            unsigned int intrinsic = 0;
+            unsigned int first_argument = DYN_INVALID_NODE;
+            unsigned int second_argument = DYN_INVALID_NODE;
+            if (dyn_token_word(parser, "keyboard")) intrinsic = 1u;
+            else if (dyn_token_word(parser, "time")
+                || dyn_token_word(parser, "time_low")) intrinsic = 2u;
+            else if (dyn_token_word(parser, "time_high")) intrinsic = 3u;
+            else if (dyn_token_word(parser, "screen")) intrinsic = 4u;
+            else if (dyn_token_word(parser, "persistent_load")) intrinsic = 5u;
+            else intrinsic = 6u;
+            dyn_lexer_next(&parser->lexer);
+            dyn_take(parser, DYN_TOK_LPAREN);
+            if (intrinsic >= 4u) {
+                first_argument = dyn_assignment(parser);
+                if (intrinsic == 4u || intrinsic == 6u) {
+                    dyn_take(parser, DYN_TOK_COMMA);
+                    second_argument = dyn_assignment(parser);
+                }
+            }
+            dyn_take(parser, DYN_TOK_RPAREN);
+            return dyn_new_node(
+                parser, DYN_NODE_CALL_INTRINSIC, intrinsic,
+                first_argument, second_argument
+            );
+        }
         dyn_lexer_next(&parser->lexer);
         local = dyn_find_local(parser, position, length);
         if (local == DYN_INVALID_NODE) {
@@ -201,6 +249,48 @@ static unsigned int dyn_increment(
     return dyn_new_node(parser, DYN_NODE_ASSIGN, 0, operand, operation);
 }
 
+static unsigned int dyn_scalar_type(struct DynParser *parser) {
+    unsigned int size = 4u;
+    if (parser->lexer.current.kind == DYN_TOK_CONST)
+        dyn_lexer_next(&parser->lexer);
+    if (parser->lexer.current.kind == DYN_TOK_CHAR_TYPE) {
+        dyn_lexer_next(&parser->lexer);
+        return 1u;
+    }
+    if (
+        parser->lexer.current.kind == DYN_TOK_UNSIGNED
+        || parser->lexer.current.kind == DYN_TOK_SIGNED
+    ) {
+        dyn_lexer_next(&parser->lexer);
+        if (
+            parser->lexer.current.kind == DYN_TOK_CHAR_TYPE
+            || parser->lexer.current.kind == DYN_TOK_SHORT
+            || parser->lexer.current.kind == DYN_TOK_LONG
+            || parser->lexer.current.kind == DYN_TOK_INT
+        ) {
+            if (parser->lexer.current.kind == DYN_TOK_CHAR_TYPE) size = 1u;
+            else if (parser->lexer.current.kind == DYN_TOK_SHORT) size = 2u;
+            dyn_lexer_next(&parser->lexer);
+        }
+        return size;
+    }
+    if (parser->lexer.current.kind == DYN_TOK_SHORT) {
+        dyn_lexer_next(&parser->lexer);
+        if (parser->lexer.current.kind == DYN_TOK_INT)
+            dyn_lexer_next(&parser->lexer);
+        return 2u;
+    }
+    if (
+        parser->lexer.current.kind == DYN_TOK_INT
+        || parser->lexer.current.kind == DYN_TOK_LONG
+        || parser->lexer.current.kind == DYN_TOK_VOID
+    ) {
+        dyn_lexer_next(&parser->lexer);
+        return size;
+    }
+    return 0u;
+}
+
 static unsigned int dyn_postfix(struct DynParser *parser) {
     unsigned int operand = dyn_primary(parser);
     while (
@@ -218,6 +308,54 @@ static unsigned int dyn_unary(struct DynParser *parser) {
     int token = parser->lexer.current.kind;
     int kind;
     unsigned int operand;
+    if (token == DYN_TOK_SIZEOF) {
+        struct DynLexer saved;
+        unsigned int size;
+        dyn_lexer_next(&parser->lexer);
+        if (parser->lexer.current.kind == DYN_TOK_LPAREN) {
+            dyn_restore_lexer(&saved, &parser->lexer);
+            dyn_lexer_next(&parser->lexer);
+            size = dyn_scalar_type(parser);
+            while (size && parser->lexer.current.kind == DYN_TOK_STAR) {
+                size = 4u;
+                dyn_lexer_next(&parser->lexer);
+            }
+            if (size && parser->lexer.current.kind == DYN_TOK_RPAREN) {
+                dyn_lexer_next(&parser->lexer);
+                return dyn_new_node(
+                    parser, DYN_NODE_NUMBER, size,
+                    DYN_INVALID_NODE, DYN_INVALID_NODE
+                );
+            }
+            dyn_restore_lexer(&parser->lexer, &saved);
+        }
+        operand = dyn_unary(parser);
+        if (
+            operand < parser->program->count
+            && parser->program->nodes[operand].kind == DYN_NODE_LOCAL
+        ) size = parser->program->locals[
+            parser->program->nodes[operand].value
+        ].size;
+        else size = 4u;
+        return dyn_new_node(
+            parser, DYN_NODE_NUMBER, size,
+            DYN_INVALID_NODE, DYN_INVALID_NODE
+        );
+    }
+    if (token == DYN_TOK_LPAREN) {
+        struct DynLexer saved;
+        unsigned int size;
+        dyn_restore_lexer(&saved, &parser->lexer);
+        dyn_lexer_next(&parser->lexer);
+        size = dyn_scalar_type(parser);
+        while (size && parser->lexer.current.kind == DYN_TOK_STAR)
+            dyn_lexer_next(&parser->lexer);
+        if (size && parser->lexer.current.kind == DYN_TOK_RPAREN) {
+            dyn_lexer_next(&parser->lexer);
+            return dyn_unary(parser);
+        }
+        dyn_restore_lexer(&parser->lexer, &saved);
+    }
     if (
         token != DYN_TOK_PLUS
         && token != DYN_TOK_MINUS
@@ -471,25 +609,24 @@ static unsigned int dyn_sequence(
 
 static int dyn_declaration_start(int kind) {
     return kind == DYN_TOK_INT || kind == DYN_TOK_UNSIGNED
-        || kind == DYN_TOK_SIGNED || kind == DYN_TOK_CHAR_TYPE;
+        || kind == DYN_TOK_SIGNED || kind == DYN_TOK_CHAR_TYPE
+        || kind == DYN_TOK_SHORT || kind == DYN_TOK_LONG
+        || kind == DYN_TOK_CONST;
 }
 
 static unsigned int dyn_declaration(struct DynParser *parser) {
     unsigned int local;
     unsigned int initializer;
-    if (
-        parser->lexer.current.kind == DYN_TOK_UNSIGNED
-        || parser->lexer.current.kind == DYN_TOK_SIGNED
-    ) {
+    unsigned int size = dyn_scalar_type(parser);
+    while (parser->lexer.current.kind == DYN_TOK_STAR) {
+        size = 4u;
         dyn_lexer_next(&parser->lexer);
-        if (parser->lexer.current.kind == DYN_TOK_INT)
-            dyn_lexer_next(&parser->lexer);
-    } else dyn_lexer_next(&parser->lexer);
+    }
     if (parser->lexer.current.kind != DYN_TOK_IDENTIFIER) {
         parser->error = 1;
         return DYN_INVALID_NODE;
     }
-    local = dyn_add_local(parser);
+    local = dyn_add_local(parser, size);
     dyn_lexer_next(&parser->lexer);
     if (parser->lexer.current.kind == DYN_TOK_ASSIGN) {
         dyn_lexer_next(&parser->lexer);

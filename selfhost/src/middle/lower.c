@@ -10,7 +10,8 @@ static int dyn_constant_expression(
     if (node->kind == DYN_NODE_NUMBER) return 1;
     if (node->kind == DYN_NODE_LOCAL || node->kind == DYN_NODE_ASSIGN
         || node->kind == DYN_NODE_CALL_INPUT
-        || node->kind == DYN_NODE_CALL_OUTPUT) return 0;
+        || node->kind == DYN_NODE_CALL_OUTPUT
+        || node->kind == DYN_NODE_CALL_INTRINSIC) return 0;
     if (node->kind == DYN_NODE_CONDITIONAL)
         return dyn_constant_expression(program, node->value)
             && dyn_constant_expression(program, node->left)

@@ -4,7 +4,7 @@ This document describes C accepted **by the compiler in `selfhost/`**, not the
 larger subset accepted by the Python compiler that currently builds it. Every
 new self-hosting language feature should be added here with an execution test.
 
-## Current stage: stage 0.4
+## Current stage: stage 0.5
 
 Stage 0.3 accepts exactly one translation unit containing one `main` definition.
 The original constant-return form remains supported:
@@ -48,14 +48,18 @@ identifiers currently produce a parse error when used in the stage-0 grammar.
 The runtime-code path additionally supports:
 
 - Up to six function-scope scalar locals declared as `int`, `unsigned int`,
-  `signed int`, or `char`, with optional initializers.
+  `signed int`, `char`, short/long integer spellings, or pointer-shaped scalar
+  declarators, with optional `const` and initializers.
+- Basic scalar cast syntax and `sizeof` for scalar type names and locals. Casts
+  do not yet emit narrowing/sign-extension conversions.
 - Local reads and simple `=` assignment expressions.
 - Compound blocks, expression statements, `if`/`else`, `while`, `do`, `for`,
   `break`, `continue`, and `return`.
 - Prefix and postfix `++`/`--`, plus simple and compound assignments. Postfix
   increment currently yields the updated value, a temporary bootstrap
   divergence when its value is consumed.
-- Direct calls to the `input()` and `output(value)` Dynphony intrinsics.
+- Direct calls to `input`, `output`, `keyboard`, `screen`, `time`, `time_low`,
+  `time_high`, `persistent_load`, and `persistent_store`.
 - Runtime arithmetic (including software multiply/divide/remainder), shifts,
   bitwise operations, comparisons, logical operators, conditional expressions,
   and comma expressions.

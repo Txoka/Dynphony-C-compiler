@@ -123,6 +123,7 @@ enum DynNodeKind {
     DYN_NODE_ASSIGN,
     DYN_NODE_CALL_INPUT,
     DYN_NODE_CALL_OUTPUT,
+    DYN_NODE_CALL_INTRINSIC,
     DYN_NODE_SEQUENCE,
     DYN_NODE_RETURN,
     DYN_NODE_IF,
@@ -145,6 +146,7 @@ struct DynNode {
 struct DynLocal {
     unsigned int position;
     unsigned int length;
+    unsigned int size;
 };
 
 struct DynAstProgram {

@@ -1,4 +1,4 @@
-# Dynphony compiler in C: stage 0.4
+# Dynphony compiler in C: stage 0.5
 
 This directory is the start of the self-hosting compiler. Its layout mirrors the
 Python implementation where that separation is already useful:
@@ -77,6 +77,10 @@ and direct `input()`/`output()` calls. Multiplication and unsigned division are
 expanded into software instruction sequences. It is intentionally unoptimized
 and register-only; stack frames, general functions, and aggregate types are
 subsequent bootstrap layers.
+
+Scalar type spellings, pointer-shaped local declarators, basic casts and
+`sizeof`, and all low-level Dynphony device intrinsics are also accepted. Full
+pointer semantics and scalar conversion rules are not implemented yet.
 
 ## Next bootstrap stages
 

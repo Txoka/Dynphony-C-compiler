@@ -122,6 +122,40 @@ class BootstrapCompilerTests(unittest.TestCase):
         self.assertEqual(program.run(max_steps=100_000), 31)
         self.assertEqual(program.outputs, [31])
 
+    def test_scalar_declarators_casts_and_sizeof(self):
+        source = b"""int main(void) {
+            const char value = (char)input();
+            unsigned long *pointer = 0;
+            return sizeof(char) + sizeof(value) + sizeof(pointer)
+                + (unsigned int)value;
+        }"""
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(
+            binary, load_address=control.program_load_address, inputs=[4]
+        )
+        self.assertEqual(program.run(), 10)
+
+    def test_runtime_device_intrinsics(self):
+        source = b"""int main(void) {
+            unsigned int key = keyboard();
+            persistent_store(4, key + time());
+            screen(2, key);
+            return persistent_load(4) ^ time_high();
+        }"""
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(
+            binary,
+            load_address=control.program_load_address,
+            keyboard_inputs=[7],
+            time_value=0x1122334400000005,
+            persistent_size=256,
+        )
+        self.assertEqual(program.run(), 12 ^ 0x11223344)
+        self.assertEqual(program.persistent_read(4), 12)
+        self.assertEqual(program.screen_updates, [(2, 7)])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -50,6 +50,16 @@ static unsigned int dyn_new_node(
     node->left = left;
     node->right = right;
     node->extra = DYN_INVALID_NODE;
+    node->dimension_start = 0u;
+    node->dimension_count = 0u;
+    if (kind == DYN_NODE_LOCAL && value < parser->program->local_count) {
+        node->dimension_start = parser->program->locals[value].dimension_start;
+        node->dimension_count = parser->program->locals[value].dimension_count;
+    } else if (kind == DYN_NODE_GLOBAL
+        && value < parser->program->global_count) {
+        node->dimension_start = parser->program->globals[value].dimension_start;
+        node->dimension_count = parser->program->globals[value].dimension_count;
+    }
     return index;
 }
 
@@ -259,6 +269,8 @@ static unsigned int dyn_add_local(
     local->array = 0;
     local->pointer = pointer;
     local->struct_id = parser->type_struct;
+    local->dimension_start = 0u;
+    local->dimension_count = 0u;
     local->scope_depth = parser->scope_depth;
     if (parser->type_struct != DYN_INVALID_NODE && !pointer)
         parser->frame_size += (size + 3u) & 0xfffffffcu;
@@ -353,6 +365,8 @@ static unsigned int dyn_parse_string(struct DynParser *parser) {
     global->array = 1;
     global->pointer = 0;
     global->struct_id = DYN_INVALID_NODE;
+    global->dimension_start = 0u;
+    global->dimension_count = 0u;
     global->defined = 1;
     global->internal = 1;
     global->data = data;
@@ -483,11 +497,19 @@ static unsigned int dyn_primary(struct DynParser *parser) {
                     DYN_INVALID_NODE, DYN_INVALID_NODE
                 );
             global = dyn_find_global(parser, position, length);
-            if (global != DYN_INVALID_NODE)
-                return dyn_new_node(
+            if (global != DYN_INVALID_NODE) {
+                node = dyn_new_node(
                     parser, DYN_NODE_GLOBAL, global,
                     DYN_INVALID_NODE, 0u
                 );
+                if (node != DYN_INVALID_NODE) {
+                    parser->program->nodes[node].dimension_start =
+                        parser->program->globals[global].dimension_start;
+                    parser->program->nodes[node].dimension_count =
+                        parser->program->globals[global].dimension_count;
+                }
+                return node;
+            }
             node = dyn_new_node(
                 parser, DYN_NODE_GLOBAL, position,
                 DYN_INVALID_NODE, DYN_INVALID_NODE
@@ -496,10 +518,17 @@ static unsigned int dyn_primary(struct DynParser *parser) {
                 parser->program->nodes[node].extra = length;
             return node;
         }
-        return dyn_new_node(
+        node = dyn_new_node(
             parser, DYN_NODE_LOCAL, local,
             DYN_INVALID_NODE, DYN_INVALID_NODE
         );
+        if (node != DYN_INVALID_NODE) {
+            parser->program->nodes[node].dimension_start =
+                parser->program->locals[local].dimension_start;
+            parser->program->nodes[node].dimension_count =
+                parser->program->locals[local].dimension_count;
+        }
+        return node;
     }
     parser->error = 1;
     return DYN_INVALID_NODE;
@@ -650,6 +679,8 @@ static int dyn_node_pointer(
         return global->pointer || global->array;
     }
     if (node->kind == DYN_NODE_ADDRESS) return 1;
+    if (node->kind == DYN_NODE_SUBSCRIPT)
+        return node->dimension_count != 0u;
     if (node->kind == DYN_NODE_MEMBER
         && node->value < parser->program->member_count) {
         const struct DynMember *member = &parser->program->members[node->value];
@@ -672,10 +703,22 @@ static unsigned int dyn_postfix(struct DynParser *parser) {
             unsigned int element_size = 4u;
             unsigned int structure = dyn_node_struct(parser, operand);
             unsigned int node;
+            unsigned int dimension_start = 0u;
+            unsigned int dimension_count = 0u;
+            if (operand < parser->program->count) {
+                dimension_start =
+                    parser->program->nodes[operand].dimension_start;
+                dimension_count =
+                    parser->program->nodes[operand].dimension_count;
+            }
             dyn_lexer_next(&parser->lexer);
             subscript = dyn_expression(parser);
             dyn_take(parser, DYN_TOK_RBRACKET);
-            if (operand < parser->program->count
+            if (dimension_count)
+                element_size = parser->program->dimensions[
+                    dimension_start
+                ].stride;
+            else if (operand < parser->program->count
                 && parser->program->nodes[operand].kind == DYN_NODE_LOCAL)
                 element_size = parser->program->locals[
                     parser->program->nodes[operand].value
@@ -695,8 +738,15 @@ static unsigned int dyn_postfix(struct DynParser *parser) {
             node = dyn_new_node(
                 parser, DYN_NODE_SUBSCRIPT, element_size, operand, subscript
             );
-            if (node != DYN_INVALID_NODE)
+            if (node != DYN_INVALID_NODE) {
                 parser->program->nodes[node].extra = structure;
+                if (dimension_count) {
+                    parser->program->nodes[node].dimension_start =
+                        dimension_start + 1u;
+                    parser->program->nodes[node].dimension_count =
+                        dimension_count - 1u;
+                }
+            }
             operand = node;
         } else {
             int arrow = parser->lexer.current.kind == DYN_TOK_ARROW;
@@ -726,6 +776,12 @@ static unsigned int dyn_postfix(struct DynParser *parser) {
                 parser, DYN_NODE_MEMBER, member, operand,
                 arrow ? 1u : 0u
             );
+            if (operand != DYN_INVALID_NODE) {
+                parser->program->nodes[operand].dimension_start =
+                    parser->program->members[member].dimension_start;
+                parser->program->nodes[operand].dimension_count =
+                    parser->program->members[member].dimension_count;
+            }
         }
     }
     while (
@@ -1041,6 +1097,9 @@ static unsigned int dyn_assignment(struct DynParser *parser) {
         if (dyn_node_struct(parser, left) != DYN_INVALID_NODE
             && !dyn_node_pointer(parser, left))
             parser->error = 1;
+        if (left < parser->program->count
+            && parser->program->nodes[left].dimension_count)
+            parser->error = 1;
         dyn_lexer_next(&parser->lexer);
         right = dyn_assignment(parser);
         if (token != DYN_TOK_ASSIGN) {
@@ -1094,6 +1153,54 @@ static int dyn_declaration_start(const struct DynParser *parser) {
         ) != DYN_INVALID_NODE);
 }
 
+static int dyn_parse_dimensions(
+    struct DynParser *parser,
+    unsigned int element_size,
+    unsigned int *start,
+    unsigned int *count,
+    unsigned int *total
+) {
+    unsigned int index;
+    *start = parser->program->dimension_count;
+    *count = 0u;
+    while (parser->lexer.current.kind == DYN_TOK_LBRACKET) {
+        unsigned int bound;
+        unsigned int extent;
+        if (parser->program->dimension_count
+            >= parser->program->dimension_capacity) {
+            parser->error = 1;
+            return 0;
+        }
+        dyn_lexer_next(&parser->lexer);
+        bound = dyn_expression(parser);
+        dyn_take(parser, DYN_TOK_RBRACKET);
+        if (!dyn_evaluate(parser->program, bound, &extent) || !extent) {
+            parser->error = 1;
+            return 0;
+        }
+        parser->program->dimensions[parser->program->dimension_count].count
+            = extent;
+        parser->program->dimension_count += 1u;
+        *count += 1u;
+    }
+    *total = element_size;
+    index = *count;
+    while (index) {
+        struct DynDimension *dimension;
+        unsigned int product;
+        index -= 1u;
+        dimension = &parser->program->dimensions[*start + index];
+        dimension->stride = *total;
+        product = *total * dimension->count;
+        if (dimension->count && product / dimension->count != *total) {
+            parser->error = 1;
+            return 0;
+        }
+        *total = product;
+    }
+    return 1;
+}
+
 static unsigned int dyn_declaration(struct DynParser *parser) {
     unsigned int local;
     unsigned int initializer;
@@ -1118,21 +1225,22 @@ static unsigned int dyn_declaration(struct DynParser *parser) {
     }
     dyn_lexer_next(&parser->lexer);
     if (parser->lexer.current.kind == DYN_TOK_LBRACKET) {
-        unsigned int bound;
-        unsigned int count;
-        dyn_lexer_next(&parser->lexer);
-        bound = dyn_expression(parser);
-        dyn_take(parser, DYN_TOK_RBRACKET);
-        if (!dyn_evaluate(parser->program, bound, &count) || !count) {
-            parser->error = 1;
-            count = 1u;
-        }
+        unsigned int dimension_start;
+        unsigned int dimension_count;
+        unsigned int total;
+        dyn_parse_dimensions(
+            parser, size, &dimension_start, &dimension_count, &total
+        );
         parser->frame_size -= structure != DYN_INVALID_NODE && !pointer
             ? (size + 3u) & 0xfffffffcu : 4u;
-        parser->frame_size += (element_size * count + 3u) & 0xfffffffcu;
+        parser->frame_size += (total + 3u) & 0xfffffffcu;
         parser->program->locals[local].offset = parser->frame_size;
-        parser->program->locals[local].element_size = element_size;
-        parser->program->locals[local].count = count;
+        parser->program->locals[local].element_size =
+            parser->program->dimensions[dimension_start].stride;
+        parser->program->locals[local].count =
+            parser->program->dimensions[dimension_start].count;
+        parser->program->locals[local].dimension_start = dimension_start;
+        parser->program->locals[local].dimension_count = dimension_count;
         parser->program->locals[local].array = 1;
         parser->program->locals[local].size = element_size;
     }
@@ -1291,28 +1399,28 @@ static void dyn_parse_global(
     unsigned int initializer_node = DYN_INVALID_NODE;
     char *data = 0;
     unsigned int data_length = 0;
+    unsigned int dimension_start = 0u;
+    unsigned int dimension_count = 0u;
+    unsigned int total = size;
     int array = 0;
     if (parser->program->global_count >= parser->program->global_capacity) {
         parser->error = 1;
         return;
     }
     if (parser->lexer.current.kind == DYN_TOK_LBRACKET) {
-        unsigned int bound;
         array = 1;
-        dyn_lexer_next(&parser->lexer);
-        if (parser->lexer.current.kind != DYN_TOK_RBRACKET) {
-            bound = dyn_expression(parser);
-            if (!dyn_evaluate(parser->program, bound, &count) || !count)
-                parser->error = 1;
-        }
-        dyn_take(parser, DYN_TOK_RBRACKET);
+        dyn_parse_dimensions(
+            parser, size, &dimension_start, &dimension_count, &total
+        );
+        count = parser->program->dimensions[dimension_start].count;
+        element_size = parser->program->dimensions[dimension_start].stride;
     }
     if (parser->lexer.current.kind == DYN_TOK_ASSIGN) {
         unsigned int initializer;
         dyn_lexer_next(&parser->lexer);
         if (array && parser->lexer.current.kind == DYN_TOK_LBRACE) {
             unsigned int item = 0;
-            data_length = element_size * count;
+            data_length = total;
             data = calloc(data_length, 1u);
             if (!data) parser->error = 1;
             dyn_lexer_next(&parser->lexer);
@@ -1321,14 +1429,14 @@ static void dyn_parse_global(
                 unsigned int value;
                 unsigned int byte_index = 0;
                 initializer = dyn_assignment(parser);
-                if (item >= count
+                if (item >= total / size
                     || !dyn_evaluate(parser->program, initializer, &value)) {
                     parser->error = 1;
                     break;
                 }
-                while (byte_index < element_size) {
-                    unsigned int shift = 8u * (element_size - byte_index - 1u);
-                    data[item * element_size + byte_index]
+                while (byte_index < size) {
+                    unsigned int shift = 8u * (size - byte_index - 1u);
+                    data[item * size + byte_index]
                         = (char)(value >> shift);
                     byte_index += 1u;
                 }
@@ -1363,6 +1471,8 @@ static void dyn_parse_global(
     global->array = array;
     global->pointer = pointer;
     global->struct_id = structure;
+    global->dimension_start = dimension_start;
+    global->dimension_count = dimension_count;
     global->defined = defined;
     global->internal = internal;
     global->data = data;
@@ -1522,7 +1632,9 @@ static void dyn_parse_struct_definition(struct DynParser *parser) {
         unsigned int member_size = dyn_scalar_type(parser);
         unsigned int member_structure = parser->type_struct;
         unsigned int element_size = parser->type_element_size;
-        unsigned int count = 1u;
+        unsigned int dimension_start = 0u;
+        unsigned int dimension_count = 0u;
+        unsigned int total = member_size;
         unsigned int member_alignment;
         int pointer = parser->type_pointer;
         int array = 0;
@@ -1554,13 +1666,11 @@ static void dyn_parse_struct_definition(struct DynParser *parser) {
         member->name_length = parser->lexer.current.length;
         dyn_lexer_next(&parser->lexer);
         if (parser->lexer.current.kind == DYN_TOK_LBRACKET) {
-            unsigned int bound;
             array = 1;
-            dyn_lexer_next(&parser->lexer);
-            bound = dyn_expression(parser);
-            dyn_take(parser, DYN_TOK_RBRACKET);
-            if (!dyn_evaluate(parser->program, bound, &count) || !count)
-                parser->error = 1;
+            dyn_parse_dimensions(
+                parser, member_size, &dimension_start,
+                &dimension_count, &total
+            );
         }
         dyn_take(parser, DYN_TOK_SEMICOLON);
         member_alignment = pointer ? 4u
@@ -1570,12 +1680,16 @@ static void dyn_parse_struct_definition(struct DynParser *parser) {
         if (member_alignment > 4u) member_alignment = 4u;
         while (offset & (member_alignment - 1u)) offset += 1u;
         member->offset = offset;
-        member->size = array ? element_size : member_size;
-        member->element_size = element_size;
+        member->size = member_size;
+        member->element_size = array
+            ? parser->program->dimensions[dimension_start].stride
+            : element_size;
         member->struct_id = member_structure;
+        member->dimension_start = dimension_start;
+        member->dimension_count = dimension_count;
         member->pointer = pointer;
         member->array = array;
-        offset += (array ? element_size * count : member_size);
+        offset += array ? total : member_size;
         if (member_alignment > alignment) alignment = member_alignment;
         parser->program->member_count += 1u;
         structure->member_count += 1u;
@@ -1638,6 +1752,7 @@ int dyn_parse(
     program->alias_count = 0;
     program->struct_count = 0;
     program->member_count = 0;
+    program->dimension_count = 0;
     program->main_function = DYN_INVALID_NODE;
     program->source = source;
     program->expression = DYN_INVALID_NODE;
@@ -1843,13 +1958,27 @@ int dyn_parse(
                 )) { found = candidate; break; }
             }
             if (found == DYN_INVALID_NODE) parser.error = 1;
-            else node->value = found;
+            else {
+                node->value = found;
+                node->dimension_start = program->globals[found].dimension_start;
+                node->dimension_count = program->globals[found].dimension_count;
+            }
         } else if (node->kind == DYN_NODE_SUBSCRIPT
             && node->left < program->count
             && program->nodes[node->left].kind == DYN_NODE_GLOBAL) {
             unsigned int global_index = program->nodes[node->left].value;
-            if (global_index < program->global_count)
-                node->value = program->globals[global_index].element_size;
+            if (global_index < program->global_count) {
+                const struct DynNode *left = &program->nodes[node->left];
+                node->extra = program->globals[global_index].struct_id;
+                if (left->dimension_count) {
+                    node->value = program->dimensions[
+                        left->dimension_start
+                    ].stride;
+                    node->dimension_start = left->dimension_start + 1u;
+                    node->dimension_count = left->dimension_count - 1u;
+                } else node->value =
+                    program->globals[global_index].element_size;
+            }
         }
         index += 1u;
     }

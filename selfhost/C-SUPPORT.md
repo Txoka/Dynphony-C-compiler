@@ -4,9 +4,9 @@ This document describes C accepted **by the compiler in `selfhost/`**, not the
 larger subset accepted by the Python compiler that currently builds it. Every
 new self-hosting language feature should be added here with an execution test.
 
-## Current stage: stage 0.13
+## Current stage: stage 0.14
 
-Stage 0.13 accepts exactly one translation unit containing a `main` definition.
+Stage 0.14 accepts exactly one translation unit containing a `main` definition.
 The original constant-return form remains supported:
 
 ```c
@@ -59,10 +59,10 @@ The runtime-code path additionally supports:
 - Multiple scalar function definitions, prototypes with named parameters,
   forward calls, nested calls, and recursion. Up to six scalar arguments use
   `r1` through `r6`; parameters and locals are saved in per-call stack frames.
-- One-dimensional fixed local arrays with constant bounds, array-to-pointer
+- Fixed local arrays with constant bounds, array-to-pointer
   decay, address-of, pointer dereference, and scaled subscripting. Array element
   loads and stores honor `char`, `short`, and word widths.
-- File-scope scalar and one-dimensional fixed-array objects, including
+- File-scope scalar and fixed-array objects, including
   `static`/`extern` declarations, constant scalar initializers, brace array
   initializers, and references declared before or after a function.
 - String literals with common escapes and adjacent-literal concatenation.
@@ -80,14 +80,17 @@ The runtime-code path additionally supports:
 - Forward declarations for named structures, plus file-scope typedef names for
   scalar, structure, and pointer types. Opaque structure pointer typedefs are
   updated when the later definition supplies their element size.
+- Fixed multidimensional arrays in local, global/static, and structure-member
+  storage. Declarators retain every extent and row stride; intermediate
+  subscripts decay to appropriately scaled row pointers.
 - Runtime arithmetic (including software multiply/divide/remainder), shifts,
   bitwise operations, comparisons, logical operators, conditional expressions,
   and comma expressions.
 
 Compound statements introduce lexical scopes and inner locals may shadow outer
 locals. Deep expressions that exhaust scratch registers and calls with
-stack-passed arguments are rejected rather than spilled. Multidimensional
-arrays, VLAs, unions, anonymous structures, aggregate
+stack-passed arguments are rejected rather than spilled. Variable-length
+arrays, unions, anonymous structures, aggregate
 assignment/arguments/returns, enum-typed object declarations, block-scope
 typedefs, full scalar conversions, designated initializers, and multiple
 translation units remain unsupported.

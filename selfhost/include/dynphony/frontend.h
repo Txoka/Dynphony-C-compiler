@@ -149,6 +149,8 @@ struct DynNode {
     unsigned int left;
     unsigned int right;
     unsigned int extra;
+    unsigned int dimension_start;
+    unsigned int dimension_count;
 };
 
 struct DynLocal {
@@ -161,6 +163,8 @@ struct DynLocal {
     int array;
     int pointer;
     unsigned int struct_id;
+    unsigned int dimension_start;
+    unsigned int dimension_count;
     unsigned int scope_depth;
 };
 
@@ -185,6 +189,8 @@ struct DynGlobal {
     int array;
     int pointer;
     unsigned int struct_id;
+    unsigned int dimension_start;
+    unsigned int dimension_count;
     int defined;
     int internal;
     char *data;
@@ -223,8 +229,15 @@ struct DynMember {
     unsigned int size;
     unsigned int element_size;
     unsigned int struct_id;
+    unsigned int dimension_start;
+    unsigned int dimension_count;
     int pointer;
     int array;
+};
+
+struct DynDimension {
+    unsigned int count;
+    unsigned int stride;
 };
 
 struct DynAstProgram {
@@ -255,6 +268,9 @@ struct DynAstProgram {
     struct DynMember *members;
     unsigned int member_count;
     unsigned int member_capacity;
+    struct DynDimension *dimensions;
+    unsigned int dimension_count;
+    unsigned int dimension_capacity;
 };
 
 void dyn_lexer_init(

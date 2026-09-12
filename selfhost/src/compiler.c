@@ -148,7 +148,9 @@ int dyn_compile_buffer(
     }
     program.structs = calloc(capacity, sizeof(struct DynStruct));
     program.members = calloc(capacity, sizeof(struct DynMember));
-    if (!program.structs || !program.members) {
+    program.dimensions = calloc(capacity, sizeof(struct DynDimension));
+    if (!program.structs || !program.members || !program.dimensions) {
+        if (program.dimensions) free(program.dimensions);
         if (program.members) free(program.members);
         if (program.structs) free(program.structs);
         free(program.aliases);
@@ -167,6 +169,7 @@ int dyn_compile_buffer(
     program.alias_capacity = capacity;
     program.struct_capacity = capacity;
     program.member_capacity = capacity;
+    program.dimension_capacity = capacity;
 
     if (!dyn_parse(source, length, &program))
         status = DYN_COMPILE_PARSE_ERROR;
@@ -186,6 +189,7 @@ int dyn_compile_buffer(
             global_index += 1u;
         }
     }
+    free(program.dimensions);
     free(program.members);
     free(program.structs);
     free(program.aliases);

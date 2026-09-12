@@ -297,6 +297,8 @@ static unsigned int dyn_pointer_element(const struct DynAstProgram *program,
         const struct DynMember *member = &program->members[node->value];
         return member->pointer || member->array ? member->element_size : 0u;
     }
+    if (node->kind == DYN_NODE_SUBSCRIPT && node->dimension_count)
+        return program->dimensions[node->dimension_start].stride;
     if (node->kind == DYN_NODE_ADDRESS)
         return dyn_lvalue_size(program, node->left);
     if (node->kind == DYN_NODE_ADD) {
@@ -428,6 +430,7 @@ static void dyn_expression(struct DynEmitter *e,
     }
     if (node->kind == DYN_NODE_DEREFERENCE || node->kind == DYN_NODE_SUBSCRIPT) {
         dyn_lvalue_address(e, program, index, reg);
+        if (node->kind == DYN_NODE_SUBSCRIPT && node->dimension_count) return;
         dyn_byte(e, dyn_memory_operation(node->value, 0));
         dyn_byte(e, reg << 4); dyn_byte(e, reg); return;
     }

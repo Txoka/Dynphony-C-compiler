@@ -378,6 +378,23 @@ class BootstrapCompilerTests(unittest.TestCase):
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(), 74)
 
+    def test_multidimensional_fixed_arrays_and_strides(self):
+        source = b'''int global_values[2][3];
+        struct Bytes { char values[2][3]; };
+        int main(void) {
+            int local_values[2][3];
+            struct Bytes bytes;
+            global_values[1][2] = 10;
+            local_values[1][2] = 20;
+            bytes.values[1][2] = 12;
+            return global_values[1][2] + local_values[1][2]
+                + bytes.values[1][2];
+        }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 42)
+
 
 if __name__ == "__main__":
     unittest.main()

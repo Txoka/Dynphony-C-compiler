@@ -251,7 +251,41 @@ void dyn_lexer_next(struct DynLexer *lexer) {
         return;
     }
     lexer->position += 1;
-    if (first == '=' && lexer->position < lexer->length
+    if (first == '<' && lexer->position + 1u < lexer->length
+        && lexer->source[lexer->position] == '<'
+        && lexer->source[lexer->position + 1u] == '=') {
+        lexer->position += 2u;
+        dyn_token(lexer, DYN_TOK_LSHIFT_ASSIGN, start, 0);
+    } else if (first == '>' && lexer->position + 1u < lexer->length
+        && lexer->source[lexer->position] == '>'
+        && lexer->source[lexer->position + 1u] == '=') {
+        lexer->position += 2u;
+        dyn_token(lexer, DYN_TOK_RSHIFT_ASSIGN, start, 0);
+    } else if (first == '+' && lexer->position < lexer->length
+        && lexer->source[lexer->position] == '=') {
+        lexer->position += 1u; dyn_token(lexer, DYN_TOK_ADD_ASSIGN, start, 0);
+    } else if (first == '-' && lexer->position < lexer->length
+        && lexer->source[lexer->position] == '=') {
+        lexer->position += 1u; dyn_token(lexer, DYN_TOK_SUB_ASSIGN, start, 0);
+    } else if (first == '*' && lexer->position < lexer->length
+        && lexer->source[lexer->position] == '=') {
+        lexer->position += 1u; dyn_token(lexer, DYN_TOK_MUL_ASSIGN, start, 0);
+    } else if (first == '/' && lexer->position < lexer->length
+        && lexer->source[lexer->position] == '=') {
+        lexer->position += 1u; dyn_token(lexer, DYN_TOK_DIV_ASSIGN, start, 0);
+    } else if (first == '%' && lexer->position < lexer->length
+        && lexer->source[lexer->position] == '=') {
+        lexer->position += 1u; dyn_token(lexer, DYN_TOK_REM_ASSIGN, start, 0);
+    } else if (first == '&' && lexer->position < lexer->length
+        && lexer->source[lexer->position] == '=') {
+        lexer->position += 1u; dyn_token(lexer, DYN_TOK_AND_ASSIGN, start, 0);
+    } else if (first == '|' && lexer->position < lexer->length
+        && lexer->source[lexer->position] == '=') {
+        lexer->position += 1u; dyn_token(lexer, DYN_TOK_OR_ASSIGN, start, 0);
+    } else if (first == '^' && lexer->position < lexer->length
+        && lexer->source[lexer->position] == '=') {
+        lexer->position += 1u; dyn_token(lexer, DYN_TOK_XOR_ASSIGN, start, 0);
+    } else if (first == '=' && lexer->position < lexer->length
         && lexer->source[lexer->position] == '=') {
         lexer->position += 1;
         dyn_token(lexer, DYN_TOK_EQUAL, start, 0);

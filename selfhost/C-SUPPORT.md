@@ -4,7 +4,7 @@ This document describes C accepted **by the compiler in `selfhost/`**, not the
 larger subset accepted by the Python compiler that currently builds it. Every
 new self-hosting language feature should be added here with an execution test.
 
-## Current stage: stage 0.3
+## Current stage: stage 0.4
 
 Stage 0.3 accepts exactly one translation unit containing one `main` definition.
 The original constant-return form remains supported:
@@ -50,15 +50,20 @@ The runtime-code path additionally supports:
 - Up to six function-scope scalar locals declared as `int`, `unsigned int`,
   `signed int`, or `char`, with optional initializers.
 - Local reads and simple `=` assignment expressions.
-- Compound blocks, expression statements, `if`/`else`, `while`, and `return`.
+- Compound blocks, expression statements, `if`/`else`, `while`, `do`, `for`,
+  `break`, `continue`, and `return`.
+- Prefix and postfix `++`/`--`, plus simple and compound assignments. Postfix
+  increment currently yields the updated value, a temporary bootstrap
+  divergence when its value is consumed.
 - Direct calls to the `input()` and `output(value)` Dynphony intrinsics.
-- Runtime `+`, `-`, shifts, bitwise operations, comparisons, logical operators,
-  conditional expressions, and comma expressions.
+- Runtime arithmetic (including software multiply/divide/remainder), shifts,
+  bitwise operations, comparisons, logical operators, conditional expressions,
+  and comma expressions.
 
 Local scopes are not separated yet, and all locals currently occupy `r8` through
-`r13`. Runtime multiplication, division, and remainder are not emitted yet.
-Arrays, pointers, `for`, `do`, `break`, `continue`, user-defined functions,
-structures, enums, typedefs, and multiple translation units remain unsupported.
+`r13`. Deep expressions that exhaust scratch registers are rejected rather than
+spilled. Arrays, pointers, user-defined functions, structures, enums, typedefs,
+and multiple translation units remain unsupported.
 
 ### Pipeline and generated code
 

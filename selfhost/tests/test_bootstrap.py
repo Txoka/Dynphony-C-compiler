@@ -85,6 +85,43 @@ class BootstrapCompilerTests(unittest.TestCase):
         self.assertEqual(program.run(), 15)
         self.assertEqual(program.outputs, [15])
 
+    def test_for_do_break_continue_and_increment(self):
+        source = b"""int main(void) {
+            int i = 0;
+            int total = 0;
+            for (i = 0; i < 6; i++) {
+                if (i == 2) continue;
+                if (i == 5) break;
+                total += i;
+            }
+            do { total += 1; } while (total < 9);
+            output(total);
+            return total;
+        }"""
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 9)
+        self.assertEqual(program.outputs, [9])
+
+    def test_runtime_software_multiply_divide_and_remainder(self):
+        source = b"""int main(void) {
+            unsigned int value = input();
+            unsigned int product = value * 7;
+            unsigned int quotient = product / 3;
+            unsigned int remainder = product % 3;
+            unsigned int result = quotient + remainder;
+            output(result);
+            return result;
+        }"""
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(
+            binary, load_address=control.program_load_address, inputs=[13]
+        )
+        self.assertEqual(program.run(max_steps=100_000), 31)
+        self.assertEqual(program.outputs, [31])
+
 
 if __name__ == "__main__":
     unittest.main()

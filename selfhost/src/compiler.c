@@ -215,9 +215,10 @@ int dyn_compile_project(
     unsigned int index;
     unsigned int unused_address;
     unsigned int unused_length;
-    unsigned int source_address = 0;
     unsigned int source_length = 0;
     unsigned int source_count = 0;
+    unsigned int source_position = 0;
+    unsigned int files_position;
     unsigned int image_length = 0;
     unsigned int record_length;
     unsigned int image_capacity;
@@ -241,6 +242,7 @@ int dyn_compile_project(
         dyn_project_skip_blob(&reader, &unused_address, &unused_length);
         index += 1u;
     }
+    files_position = reader.position;
     index = 0;
     while (index < file_count && !reader.error) {
         unsigned int kind = dyn_project_u32(&reader);
@@ -250,13 +252,15 @@ int dyn_compile_project(
         dyn_project_skip_blob(&reader, &contents_address, &contents_length);
         if (kind == 1u) {
             source_count += 1u;
-            source_address = contents_address;
-            source_length = contents_length;
+            if (contents_length >= 1048576u
+                || source_length > 1048576u - contents_length - 1u)
+                reader.error = 1;
+            else source_length += contents_length + 1u;
         } else if (kind != 2u) reader.error = 1;
         index += 1u;
     }
     if (
-        reader.error || reader.position != reader.length || source_count != 1u
+        reader.error || reader.position != reader.length || !source_count
     ) {
         dyn_write_failure(output_address, output_capacity);
         return DYN_COMPILE_INVALID_PROJECT;
@@ -275,7 +279,24 @@ int dyn_compile_project(
         dyn_write_failure(output_address, output_capacity);
         return DYN_COMPILE_OUT_OF_MEMORY;
     }
-    dyn_copy_persistent(source, source_address, source_length);
+    reader.position = files_position;
+    index = 0;
+    while (index < file_count && !reader.error) {
+        unsigned int kind = dyn_project_u32(&reader);
+        unsigned int contents_address;
+        unsigned int contents_length;
+        dyn_project_skip_blob(&reader, &unused_address, &unused_length);
+        dyn_project_skip_blob(&reader, &contents_address, &contents_length);
+        if (kind == 1u) {
+            dyn_copy_persistent(
+                source + source_position, contents_address, contents_length
+            );
+            source_position += contents_length;
+            source[source_position] = '\n';
+            source_position += 1u;
+        }
+        index += 1u;
+    }
     source[source_length] = 0;
     status = dyn_compile_buffer(
         source, source_length, program_load_address, image,

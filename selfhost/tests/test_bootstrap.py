@@ -2,8 +2,14 @@ import unittest
 from pathlib import Path
 
 from dynphony.emulator import Machine
+from dynphony.project import (
+    Project,
+    ProjectFile,
+    decode_control,
+    make_persistent_image,
+)
 
-from selfhost.tools.bootstrap import build_stage0, run_stage0
+from selfhost.tools.bootstrap import build_stage0, run_machine, run_stage0
 
 
 class BootstrapCompilerTests(unittest.TestCase):
@@ -228,6 +234,34 @@ class BootstrapCompilerTests(unittest.TestCase):
         self.assertEqual(status, 0)
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(), 44)
+
+    def test_project_links_multiple_translation_units(self):
+        project = Project((
+            ProjectFile("helper.c", b'''int add(int left, int right) {
+                return left + right;
+            }'''),
+            ProjectFile("main.c", b'''int add(int left, int right);
+            int main(void) { return add(19, 23); }'''),
+        ))
+        persistent = make_persistent_image(
+            project, persistent_size=1 << 16, program_load_address=8192
+        )
+        machine = Machine(self.compiler.image.binary, persistent_size=1 << 16)
+        machine.persistent[:] = persistent
+        status = run_machine(
+            machine, self.compiler.image.symbols["_halt"], 50_000_000
+        )
+        control = decode_control(machine.persistent)
+        self.assertEqual(status, 0)
+        self.assertEqual(control.status, 0)
+        record = machine.persistent[
+            control.output_address:
+            control.output_address + control.output_byte_length
+        ]
+        image_length = int.from_bytes(record[:4], "big")
+        binary = bytes(record[4:4 + image_length])
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 42)
 
     def test_fixed_arrays_address_dereference_and_subscript(self):
         source = b"""int main(void) {

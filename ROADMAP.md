@@ -61,6 +61,8 @@ tests plus malformed-source diagnostics.
 
 ## Phase 3 — preprocessing and whole-project linking
 
+- [x] Accept every translation-unit record in a DCP1 project and provide an
+  initial deterministic merged-program link path for ordinary external symbols.
 - [ ] Resolve quoted includes relative to each DCP1 file and angle includes from
   DCP1 include roots; add guards and `#pragma once` behavior.
 - [ ] Implement object/function macros, conditionals, `#define`, `#undef`, and

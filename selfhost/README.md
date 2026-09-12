@@ -64,12 +64,12 @@ To compile another source through the C compiler image:
 python tools/bootstrap.py path/to/program.c -o build/program.bin
 ```
 
-For stage 0.3, the compiler reads one translation unit from DCP1 in persistent
-storage and writes the loader-compatible executable record back there. The
+The compiler reads translation units from DCP1 in persistent storage and writes
+the loader-compatible executable record back there. The
 format and status protocol are specified in
-[PROJECT-FORMAT.md](PROJECT-FORMAT.md). Multi-file records can already be
-packed, but compilation currently rejects bundles containing more than one
-translation unit.
+[PROJECT-FORMAT.md](PROJECT-FORMAT.md). Multiple source records are currently
+merged in deterministic order, providing initial cross-file symbol resolution;
+preprocessing and isolated file scope are not implemented yet.
 
 The dynamic-code path supports stack-backed scalar locals, assignments, all basic
 loop forms and loop control, runtime arithmetic/comparison/logical expressions,

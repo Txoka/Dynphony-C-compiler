@@ -4,9 +4,10 @@ This document describes C accepted **by the compiler in `selfhost/`**, not the
 larger subset accepted by the Python compiler that currently builds it. Every
 new self-hosting language feature should be added here with an execution test.
 
-## Current stage: stage 0.15
+## Current stage: stage 0.16
 
-Stage 0.15 accepts exactly one translation unit containing a `main` definition.
+Stage 0.16 accepts one or more translation-unit records containing a single
+linked `main` definition.
 The original constant-return form remains supported:
 
 ```c
@@ -131,8 +132,10 @@ int dyn_compile_buffer(const char *, unsigned int);
 ```
 
 The executable `main` reads DCC1 and DCP1 through persistent storage and writes
-a loader-compatible executable record there. This stage accepts exactly one
-translation-unit record; multi-unit preprocessing and linking remain pending.
+a loader-compatible executable record there. This stage merges translation-unit
+records in deterministic DCP1 order and resolves ordinary external function and
+object references over that merged program. Per-file preprocessing and private
+file scope, including correct `static` isolation, remain pending.
 
 ## Definition of self-hostable
 

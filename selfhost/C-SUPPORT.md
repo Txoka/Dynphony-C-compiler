@@ -4,9 +4,9 @@ This document describes C accepted **by the compiler in `selfhost/`**, not the
 larger subset accepted by the Python compiler that currently builds it. Every
 new self-hosting language feature should be added here with an execution test.
 
-## Current stage: stage 0.12
+## Current stage: stage 0.13
 
-Stage 0.12 accepts exactly one translation unit containing a `main` definition.
+Stage 0.13 accepts exactly one translation unit containing a `main` definition.
 The original constant-return form remains supported:
 
 ```c
@@ -77,7 +77,9 @@ The runtime-code path additionally supports:
   array, and previously defined structure members. Structure objects can use
   local or static/global storage. `.` and `->` produce member lvalues and may be
   chained through nested structures and self-referential pointers.
-- File-scope typedef names for previously defined structure types.
+- Forward declarations for named structures, plus file-scope typedef names for
+  scalar, structure, and pointer types. Opaque structure pointer typedefs are
+  updated when the later definition supplies their element size.
 - Runtime arithmetic (including software multiply/divide/remainder), shifts,
   bitwise operations, comparisons, logical operators, conditional expressions,
   and comma expressions.
@@ -85,10 +87,10 @@ The runtime-code path additionally supports:
 Compound statements introduce lexical scopes and inner locals may shadow outer
 locals. Deep expressions that exhaust scratch registers and calls with
 stack-passed arguments are rejected rather than spilled. Multidimensional
-arrays, VLAs, unions, anonymous structures, forward structure declarations,
-aggregate assignment/arguments/returns, enum-typed object declarations,
-pointer typedefs, block-scope typedefs, full scalar conversions, designated
-initializers, and multiple translation units remain unsupported.
+arrays, VLAs, unions, anonymous structures, aggregate
+assignment/arguments/returns, enum-typed object declarations, block-scope
+typedefs, full scalar conversions, designated initializers, and multiple
+translation units remain unsupported.
 
 ### Pipeline and generated code
 

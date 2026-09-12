@@ -1,4 +1,4 @@
-# Dynphony compiler in C: stage 0.12
+# Dynphony compiler in C: stage 0.13
 
 This directory is the start of the self-hosting compiler. Its layout mirrors the
 Python implementation where that separation is already useful:
@@ -96,11 +96,13 @@ parameter, and local declarations.
 Named structures now have aligned member layout, local/global storage, fixed
 array members, nested members, self-referential pointers, and chained `.`/`->`
 lvalues. A previously defined structure can also receive a file-scope typedef.
+Forward structure declarations and pointer typedefs are supported, including an
+opaque pointer typedef completed by a later structure definition.
 
 ## Next bootstrap stages
 
-The next useful increments are fuller declarators and aggregate semantics,
-multidimensional arrays and VLAs, then preprocessing and
+The next useful increments are multidimensional arrays and VLAs, fuller
+aggregate semantics, then preprocessing and
 multiple-translation-unit linking.
 Once this C implementation accepts all constructs used by its own sources, its
 emitted compiler can compile the same sources again; a reproducible

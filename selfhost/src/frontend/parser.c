@@ -11,6 +11,8 @@ struct DynParser {
     unsigned int frame_size;
     unsigned int scope_depth;
     unsigned int type_struct;
+    unsigned int type_element_size;
+    int type_pointer;
 };
 
 static void dyn_restore_lexer(
@@ -533,6 +535,8 @@ static unsigned int dyn_increment(
 static unsigned int dyn_scalar_type(struct DynParser *parser) {
     unsigned int size = 4u;
     parser->type_struct = DYN_INVALID_NODE;
+    parser->type_element_size = 4u;
+    parser->type_pointer = 0;
     if (parser->lexer.current.kind == DYN_TOK_CONST)
         dyn_lexer_next(&parser->lexer);
     if (parser->lexer.current.kind == DYN_TOK_STRUCT) {
@@ -546,11 +550,13 @@ static unsigned int dyn_scalar_type(struct DynParser *parser) {
         if (structure == DYN_INVALID_NODE) return 0u;
         parser->type_struct = structure;
         size = parser->program->structs[structure].size;
+        parser->type_element_size = size;
         dyn_lexer_next(&parser->lexer);
         return size;
     }
     if (parser->lexer.current.kind == DYN_TOK_CHAR_TYPE) {
         dyn_lexer_next(&parser->lexer);
+        parser->type_element_size = 1u;
         return 1u;
     }
     if (
@@ -568,12 +574,14 @@ static unsigned int dyn_scalar_type(struct DynParser *parser) {
             else if (parser->lexer.current.kind == DYN_TOK_SHORT) size = 2u;
             dyn_lexer_next(&parser->lexer);
         }
+        parser->type_element_size = size;
         return size;
     }
     if (parser->lexer.current.kind == DYN_TOK_SHORT) {
         dyn_lexer_next(&parser->lexer);
         if (parser->lexer.current.kind == DYN_TOK_INT)
             dyn_lexer_next(&parser->lexer);
+        parser->type_element_size = 2u;
         return 2u;
     }
     if (
@@ -591,7 +599,10 @@ static unsigned int dyn_scalar_type(struct DynParser *parser) {
         );
         if (alias != DYN_INVALID_NODE) {
             size = parser->program->aliases[alias].size;
+            parser->type_element_size =
+                parser->program->aliases[alias].element_size;
             parser->type_struct = parser->program->aliases[alias].struct_id;
+            parser->type_pointer = parser->program->aliases[alias].pointer;
             dyn_lexer_next(&parser->lexer);
             return size;
         }
@@ -1087,10 +1098,11 @@ static unsigned int dyn_declaration(struct DynParser *parser) {
     unsigned int local;
     unsigned int initializer;
     unsigned int size = dyn_scalar_type(parser);
-    unsigned int element_size = size;
+    unsigned int element_size = parser->type_element_size;
     unsigned int structure = parser->type_struct;
-    int pointer = 0;
+    int pointer = parser->type_pointer;
     while (parser->lexer.current.kind == DYN_TOK_STAR) {
+        element_size = size ? size : 4u;
         size = 4u;
         pointer = 1;
         dyn_lexer_next(&parser->lexer);
@@ -1115,7 +1127,8 @@ static unsigned int dyn_declaration(struct DynParser *parser) {
             parser->error = 1;
             count = 1u;
         }
-        parser->frame_size -= 4u;
+        parser->frame_size -= structure != DYN_INVALID_NODE && !pointer
+            ? (size + 3u) & 0xfffffffcu : 4u;
         parser->frame_size += (element_size * count + 3u) & 0xfffffffcu;
         parser->program->locals[local].offset = parser->frame_size;
         parser->program->locals[local].element_size = element_size;
@@ -1419,6 +1432,52 @@ static int dyn_struct_definition_start(struct DynParser *parser) {
     return result;
 }
 
+static int dyn_struct_forward_start(struct DynParser *parser) {
+    struct DynLexer saved;
+    int result = 0;
+    if (parser->lexer.current.kind != DYN_TOK_STRUCT) return 0;
+    dyn_restore_lexer(&saved, &parser->lexer);
+    dyn_lexer_next(&parser->lexer);
+    if (parser->lexer.current.kind == DYN_TOK_IDENTIFIER) {
+        dyn_lexer_next(&parser->lexer);
+        result = parser->lexer.current.kind == DYN_TOK_SEMICOLON;
+    }
+    dyn_restore_lexer(&parser->lexer, &saved);
+    return result;
+}
+
+static void dyn_parse_struct_forward(struct DynParser *parser) {
+    unsigned int position;
+    unsigned int length;
+    unsigned int found;
+    dyn_take(parser, DYN_TOK_STRUCT);
+    if (parser->lexer.current.kind != DYN_TOK_IDENTIFIER) {
+        parser->error = 1;
+        return;
+    }
+    position = parser->lexer.current.position;
+    length = parser->lexer.current.length;
+    found = dyn_find_struct(parser, position, length);
+    if (found == DYN_INVALID_NODE) {
+        struct DynStruct *structure;
+        if (parser->program->struct_count >= parser->program->struct_capacity) {
+            parser->error = 1;
+            return;
+        }
+        structure = &parser->program->structs[parser->program->struct_count];
+        parser->program->struct_count += 1u;
+        structure->name_position = position;
+        structure->name_length = length;
+        structure->size = 0u;
+        structure->alignment = 1u;
+        structure->member_start = parser->program->member_count;
+        structure->member_count = 0u;
+        structure->defined = 0;
+    }
+    dyn_lexer_next(&parser->lexer);
+    dyn_take(parser, DYN_TOK_SEMICOLON);
+}
+
 static void dyn_parse_struct_definition(struct DynParser *parser) {
     struct DynStruct *structure;
     unsigned int structure_index;
@@ -1433,15 +1492,23 @@ static void dyn_parse_struct_definition(struct DynParser *parser) {
     }
     tag_position = parser->lexer.current.position;
     tag_length = parser->lexer.current.length;
-    if (dyn_find_struct(parser, tag_position, tag_length) != DYN_INVALID_NODE
-        || parser->program->struct_count >= parser->program->struct_capacity) {
+    structure_index = dyn_find_struct(parser, tag_position, tag_length);
+    if (structure_index != DYN_INVALID_NODE
+        && parser->program->structs[structure_index].defined) {
+        parser->error = 1;
+        return;
+    }
+    if (structure_index == DYN_INVALID_NODE
+        && parser->program->struct_count >= parser->program->struct_capacity) {
         parser->error = 1;
         return;
     }
     dyn_lexer_next(&parser->lexer);
     dyn_take(parser, DYN_TOK_LBRACE);
-    structure_index = parser->program->struct_count;
-    parser->program->struct_count += 1u;
+    if (structure_index == DYN_INVALID_NODE) {
+        structure_index = parser->program->struct_count;
+        parser->program->struct_count += 1u;
+    }
     structure = &parser->program->structs[structure_index];
     structure->name_position = tag_position;
     structure->name_length = tag_length;
@@ -1449,17 +1516,19 @@ static void dyn_parse_struct_definition(struct DynParser *parser) {
     structure->alignment = 1u;
     structure->member_start = parser->program->member_count;
     structure->member_count = 0u;
+    structure->defined = 0;
     while (parser->lexer.current.kind != DYN_TOK_RBRACE && !parser->error) {
         struct DynMember *member;
         unsigned int member_size = dyn_scalar_type(parser);
         unsigned int member_structure = parser->type_struct;
-        unsigned int element_size = member_size;
+        unsigned int element_size = parser->type_element_size;
         unsigned int count = 1u;
         unsigned int member_alignment;
-        int pointer = 0;
+        int pointer = parser->type_pointer;
         int array = 0;
         unsigned int check;
         while (parser->lexer.current.kind == DYN_TOK_STAR) {
+            element_size = member_size ? member_size : 4u;
             member_size = 4u;
             pointer = 1;
             dyn_lexer_next(&parser->lexer);
@@ -1516,6 +1585,7 @@ static void dyn_parse_struct_definition(struct DynParser *parser) {
     while (offset & (alignment - 1u)) offset += 1u;
     structure->size = offset;
     structure->alignment = alignment;
+    structure->defined = 1;
     {
         unsigned int member_index = structure->member_start;
         while (member_index < structure->member_start + structure->member_count) {
@@ -1523,6 +1593,24 @@ static void dyn_parse_struct_definition(struct DynParser *parser) {
             if (member->pointer && member->struct_id == structure_index)
                 member->element_size = offset;
             member_index += 1u;
+        }
+    }
+    {
+        unsigned int alias_index = 0u;
+        while (alias_index < parser->program->alias_count) {
+            struct DynTypeAlias *alias = &parser->program->aliases[alias_index];
+            if (alias->pointer && alias->struct_id == structure_index)
+                alias->element_size = offset;
+            alias_index += 1u;
+        }
+    }
+    {
+        unsigned int global_index = 0u;
+        while (global_index < parser->program->global_count) {
+            struct DynGlobal *global = &parser->program->globals[global_index];
+            if (global->pointer && global->struct_id == structure_index)
+                global->element_size = offset;
+            global_index += 1u;
         }
     }
 }
@@ -1540,6 +1628,8 @@ int dyn_parse(
     parser.frame_size = 0;
     parser.scope_depth = 0;
     parser.type_struct = DYN_INVALID_NODE;
+    parser.type_element_size = 0u;
+    parser.type_pointer = 0;
     program->count = 0;
     program->local_count = 0;
     program->function_count = 0;
@@ -1573,6 +1663,10 @@ int dyn_parse(
             dyn_parse_struct_definition(&parser);
             continue;
         }
+        if (dyn_struct_forward_start(&parser)) {
+            dyn_parse_struct_forward(&parser);
+            continue;
+        }
         if (parser.lexer.current.kind == DYN_TOK_TYPEDEF) {
             type_alias = 1;
             dyn_lexer_next(&parser.lexer);
@@ -1584,10 +1678,12 @@ int dyn_parse(
             dyn_lexer_next(&parser.lexer);
         }
         type_size = dyn_scalar_type(&parser);
-        element_size = type_size;
+        element_size = parser.type_element_size;
         {
             unsigned int structure = parser.type_struct;
+        pointer = parser.type_pointer;
         while (parser.lexer.current.kind == DYN_TOK_STAR) {
+            element_size = type_size ? type_size : 4u;
             type_size = 4u;
             pointer = 1;
             dyn_lexer_next(&parser.lexer);
@@ -1602,7 +1698,7 @@ int dyn_parse(
         dyn_lexer_next(&parser.lexer);
         if (type_alias) {
             struct DynTypeAlias *alias;
-            if (pointer || external || internal
+            if (external || internal
                 || program->alias_count >= program->alias_capacity
                 || dyn_find_alias(
                     &parser, name_position, name_length
@@ -1616,7 +1712,9 @@ int dyn_parse(
             alias->name_position = name_position;
             alias->name_length = name_length;
             alias->size = type_size;
+            alias->element_size = element_size;
             alias->struct_id = structure;
+            alias->pointer = pointer;
             continue;
         }
         if (parser.lexer.current.kind != DYN_TOK_LPAREN) {
@@ -1644,8 +1742,10 @@ int dyn_parse(
         ) {
             unsigned int parameter_size = dyn_scalar_type(&parser);
             unsigned int parameter_structure = parser.type_struct;
-            int parameter_pointer = 0;
+            unsigned int parameter_element_size = parser.type_element_size;
+            int parameter_pointer = parser.type_pointer;
             while (parser.lexer.current.kind == DYN_TOK_STAR) {
+                parameter_element_size = parameter_size ? parameter_size : 4u;
                 parameter_size = 4u;
                 parameter_pointer = 1;
                 dyn_lexer_next(&parser.lexer);
@@ -1664,6 +1764,9 @@ int dyn_parse(
                 unsigned int parameter = dyn_add_local(
                     &parser, parameter_size, parameter_pointer
                 );
+                if (parameter != DYN_INVALID_NODE)
+                    program->locals[parameter].element_size =
+                        parameter_element_size;
                 if (parameter != DYN_INVALID_NODE)
                     program->locals[parameter].struct_id = parameter_structure;
             }

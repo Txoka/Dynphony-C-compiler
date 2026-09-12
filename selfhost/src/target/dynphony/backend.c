@@ -246,7 +246,10 @@ static void dyn_lvalue_address(struct DynEmitter *e,
             dyn_alu_immediate(e, 0x27u, reg + 1u, reg + 1u, 1u);
         else if (node->value == 4u)
             dyn_alu_immediate(e, 0x27u, reg + 1u, reg + 1u, 2u);
-        else if (node->value != 1u) { e->error = 1; return; }
+        else if (node->value != 1u) {
+            dyn_constant(e, reg + 2u, node->value);
+            dyn_multiply(e, reg + 1u);
+        }
         dyn_alu(e, 0x24u, reg, reg, reg + 1u);
     } else if (node->kind == DYN_NODE_MEMBER) {
         const struct DynMember *member;
@@ -493,13 +496,20 @@ static void dyn_expression(struct DynEmitter *e,
             dyn_alu_immediate(e, 0x27u, reg + 1u, reg + 1u, 1u);
         else if (!right_scale && scale == 4u)
             dyn_alu_immediate(e, 0x27u, reg + 1u, reg + 1u, 2u);
-        else if (!right_scale && scale != 0u && scale != 1u) e->error = 1;
+        else if (!right_scale && scale != 0u && scale != 1u) {
+            dyn_constant(e, reg + 2u, scale);
+            dyn_multiply(e, reg + 1u);
+        }
         else if (!scale && right_scale == 2u)
             dyn_alu_immediate(e, 0x27u, reg, reg, 1u);
         else if (!scale && right_scale == 4u)
             dyn_alu_immediate(e, 0x27u, reg, reg, 2u);
-        else if (!scale && right_scale != 0u && right_scale != 1u)
-            e->error = 1;
+        else if (!scale && right_scale != 0u && right_scale != 1u) {
+            dyn_push(e, reg + 1u);
+            dyn_constant(e, reg + 1u, right_scale);
+            dyn_multiply(e, reg);
+            dyn_pop(e, reg + 1u);
+        }
     }
     if (node->kind == DYN_NODE_MULTIPLY) { dyn_multiply(e, reg); return; }
     if (node->kind == DYN_NODE_DIVIDE) { dyn_divide(e, reg, 0); return; }
@@ -519,7 +529,10 @@ static void dyn_expression(struct DynEmitter *e,
             unsigned int scale = dyn_pointer_element(program, node->left);
             if (scale == 2u) dyn_alu_immediate(e, 0x28u, reg, reg, 1u);
             else if (scale == 4u) dyn_alu_immediate(e, 0x28u, reg, reg, 2u);
-            else if (scale != 1u) e->error = 1;
+            else if (scale != 1u) {
+                dyn_constant(e, reg + 1u, scale);
+                dyn_divide(e, reg, 0);
+            }
         }
         return;
     }

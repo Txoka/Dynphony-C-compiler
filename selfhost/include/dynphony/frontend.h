@@ -201,7 +201,9 @@ struct DynTypeAlias {
     unsigned int name_position;
     unsigned int name_length;
     unsigned int size;
+    unsigned int element_size;
     unsigned int struct_id;
+    int pointer;
 };
 
 struct DynStruct {
@@ -211,6 +213,7 @@ struct DynStruct {
     unsigned int alignment;
     unsigned int member_start;
     unsigned int member_count;
+    int defined;
 };
 
 struct DynMember {

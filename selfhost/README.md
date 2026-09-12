@@ -1,4 +1,4 @@
-# Dynphony compiler in C: stage 0.11
+# Dynphony compiler in C: stage 0.12
 
 This directory is the start of the self-hosting compiler. Its layout mirrors the
 Python implementation where that separation is already useful:
@@ -93,11 +93,15 @@ File-scope enum definitions provide implicit and explicitly initialized integer
 constants, including references to earlier enumerators.
 File-scope typedefs can name scalar integer types and are accepted in global,
 parameter, and local declarations.
+Named structures now have aligned member layout, local/global storage, fixed
+array members, nested members, self-referential pointers, and chained `.`/`->`
+lvalues. A previously defined structure can also receive a file-scope typedef.
 
 ## Next bootstrap stages
 
-The next useful increments are structures, multidimensional arrays and VLAs,
-then preprocessing and multiple-translation-unit linking.
+The next useful increments are fuller declarators and aggregate semantics,
+multidimensional arrays and VLAs, then preprocessing and
+multiple-translation-unit linking.
 Once this C implementation accepts all constructs used by its own sources, its
 emitted compiler can compile the same sources again; a reproducible
 stage-2/stage-3 binary comparison will then establish self-hosting.

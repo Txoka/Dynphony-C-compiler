@@ -248,6 +248,18 @@ static void dyn_lvalue_address(struct DynEmitter *e,
             dyn_alu_immediate(e, 0x27u, reg + 1u, reg + 1u, 2u);
         else if (node->value != 1u) { e->error = 1; return; }
         dyn_alu(e, 0x24u, reg, reg, reg + 1u);
+    } else if (node->kind == DYN_NODE_MEMBER) {
+        const struct DynMember *member;
+        if (node->value >= program->member_count) { e->error = 1; return; }
+        member = &program->members[node->value];
+        if (node->right) dyn_expression(e, program, node->left, reg);
+        else dyn_lvalue_address(e, program, node->left, reg);
+        if (member->offset <= 65535u)
+            dyn_alu_immediate(e, 0x24u, reg, reg, member->offset);
+        else {
+            dyn_constant(e, reg + 1u, member->offset);
+            dyn_alu(e, 0x24u, reg, reg, reg + 1u);
+        }
     } else e->error = 1;
 }
 
@@ -258,6 +270,8 @@ static unsigned int dyn_lvalue_size(const struct DynAstProgram *program,
         return program->locals[node->value].size;
     if (node->kind == DYN_NODE_GLOBAL)
         return program->globals[node->value].size;
+    if (node->kind == DYN_NODE_MEMBER)
+        return program->members[node->value].size;
     if (node->kind == DYN_NODE_DEREFERENCE || node->kind == DYN_NODE_SUBSCRIPT)
         return node->value;
     return 4u;
@@ -275,6 +289,10 @@ static unsigned int dyn_pointer_element(const struct DynAstProgram *program,
     if (node->kind == DYN_NODE_GLOBAL) {
         const struct DynGlobal *global = &program->globals[node->value];
         return global->pointer || global->array ? global->element_size : 0u;
+    }
+    if (node->kind == DYN_NODE_MEMBER) {
+        const struct DynMember *member = &program->members[node->value];
+        return member->pointer || member->array ? member->element_size : 0u;
     }
     if (node->kind == DYN_NODE_ADDRESS)
         return dyn_lvalue_size(program, node->left);
@@ -314,6 +332,17 @@ static void dyn_expression(struct DynEmitter *e,
         }
         dyn_byte(e, dyn_memory_operation(program->globals[node->value].size, 0));
         dyn_byte(e, reg << 4); dyn_byte(e, 7u); return;
+    }
+    if (node->kind == DYN_NODE_MEMBER) {
+        const struct DynMember *member;
+        if (node->value >= program->member_count) { e->error = 1; return; }
+        member = &program->members[node->value];
+        dyn_lvalue_address(e, program, index, reg);
+        if (member->array
+            || (member->struct_id != DYN_INVALID_NODE && !member->pointer))
+            return;
+        dyn_byte(e, dyn_memory_operation(member->size, 0));
+        dyn_byte(e, reg << 4); dyn_byte(e, reg); return;
     }
     if (node->kind == DYN_NODE_CALL_INPUT) {
         dyn_byte(e, 0x01u); dyn_byte(e, reg << 4); return;
@@ -378,7 +407,8 @@ static void dyn_expression(struct DynEmitter *e,
             || (program->nodes[node->left].kind != DYN_NODE_LOCAL
                 && program->nodes[node->left].kind != DYN_NODE_DEREFERENCE
                 && program->nodes[node->left].kind != DYN_NODE_SUBSCRIPT
-                && program->nodes[node->left].kind != DYN_NODE_GLOBAL))
+                && program->nodes[node->left].kind != DYN_NODE_GLOBAL
+                && program->nodes[node->left].kind != DYN_NODE_MEMBER))
             e->error = 1;
         else {
             dyn_push(e, reg);
@@ -710,17 +740,28 @@ int dyn_emit_image(const struct DynIrModule *module, unsigned int load_address,
         const struct DynGlobal *global = &module->program->globals[index];
         unsigned int bytes;
         unsigned int written = 0;
+        unsigned int alignment = global->size;
         if (!global->defined) { index += 1u; continue; }
-        while (global->size > 1u && (e.position & (global->size - 1u)))
+        if (global->struct_id != DYN_INVALID_NODE && !global->pointer)
+            alignment = module->program->structs[global->struct_id].alignment;
+        if (alignment > 4u) alignment = 4u;
+        while (alignment > 1u && (e.position & (alignment - 1u)))
             dyn_byte(&e, 0u);
         e.global_offsets[index] = e.position;
         bytes = global->array ? global->element_size * global->count : global->size;
         while (written < bytes) {
             unsigned int value = global->data
                 ? ((unsigned int)global->data[written]) & 255u
-                : global->array ? 0u : global->initial_value;
+                : global->array || (global->struct_id != DYN_INVALID_NODE
+                    && !global->pointer) ? 0u : global->initial_value;
             if (global->data) {
                 dyn_byte(&e, value);
+                written += 1u;
+                continue;
+            }
+            if (global->array || (global->struct_id != DYN_INVALID_NODE
+                && !global->pointer)) {
+                dyn_byte(&e, 0u);
                 written += 1u;
                 continue;
             }

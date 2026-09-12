@@ -337,6 +337,41 @@ class BootstrapCompilerTests(unittest.TestCase):
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(), 42)
 
+    def test_struct_layout_members_pointers_and_nesting(self):
+        source = b'''struct Pair {
+            char tag;
+            int value;
+            short delta;
+            struct Pair *next;
+        };
+        struct Box {
+            struct Pair pair;
+            struct Pair *link;
+            int values[3];
+        };
+        typedef struct Pair Pair;
+        struct Pair global_pair;
+        int main(void) {
+            Pair local;
+            struct Box box;
+            struct Pair *pointer = &local;
+            pointer->tag = 2;
+            pointer->value = 30;
+            local.delta = 4;
+            box.pair.value = 5;
+            box.link = pointer;
+            box.values[1] = 1;
+            global_pair.value = 7;
+            local.next = &global_pair;
+            return box.link->tag + box.link->value + local.delta
+                + box.pair.value + box.values[1] + local.next->value
+                + sizeof(struct Pair);
+        }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 65)
+
 
 if __name__ == "__main__":
     unittest.main()

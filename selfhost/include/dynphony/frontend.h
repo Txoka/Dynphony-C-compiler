@@ -112,6 +112,7 @@ enum DynNodeKind {
     DYN_NODE_ADDRESS,
     DYN_NODE_DEREFERENCE,
     DYN_NODE_SUBSCRIPT,
+    DYN_NODE_MEMBER,
     DYN_NODE_EQUAL,
     DYN_NODE_NOT_EQUAL,
     DYN_NODE_LESS,
@@ -159,6 +160,7 @@ struct DynLocal {
     unsigned int offset;
     int array;
     int pointer;
+    unsigned int struct_id;
     unsigned int scope_depth;
 };
 
@@ -182,6 +184,7 @@ struct DynGlobal {
     unsigned int initializer_node;
     int array;
     int pointer;
+    unsigned int struct_id;
     int defined;
     int internal;
     char *data;
@@ -198,6 +201,27 @@ struct DynTypeAlias {
     unsigned int name_position;
     unsigned int name_length;
     unsigned int size;
+    unsigned int struct_id;
+};
+
+struct DynStruct {
+    unsigned int name_position;
+    unsigned int name_length;
+    unsigned int size;
+    unsigned int alignment;
+    unsigned int member_start;
+    unsigned int member_count;
+};
+
+struct DynMember {
+    unsigned int name_position;
+    unsigned int name_length;
+    unsigned int offset;
+    unsigned int size;
+    unsigned int element_size;
+    unsigned int struct_id;
+    int pointer;
+    int array;
 };
 
 struct DynAstProgram {
@@ -222,6 +246,12 @@ struct DynAstProgram {
     struct DynTypeAlias *aliases;
     unsigned int alias_count;
     unsigned int alias_capacity;
+    struct DynStruct *structs;
+    unsigned int struct_count;
+    unsigned int struct_capacity;
+    struct DynMember *members;
+    unsigned int member_count;
+    unsigned int member_capacity;
 };
 
 void dyn_lexer_init(

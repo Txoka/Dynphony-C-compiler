@@ -109,6 +109,9 @@ enum DynNodeKind {
     DYN_NODE_OR,
     DYN_NODE_XOR,
     DYN_NODE_LOGICAL_NOT,
+    DYN_NODE_ADDRESS,
+    DYN_NODE_DEREFERENCE,
+    DYN_NODE_SUBSCRIPT,
     DYN_NODE_EQUAL,
     DYN_NODE_NOT_EQUAL,
     DYN_NODE_LESS,
@@ -150,6 +153,11 @@ struct DynLocal {
     unsigned int position;
     unsigned int length;
     unsigned int size;
+    unsigned int element_size;
+    unsigned int count;
+    unsigned int offset;
+    int array;
+    int pointer;
 };
 
 struct DynFunction {
@@ -159,6 +167,7 @@ struct DynFunction {
     unsigned int local_base;
     unsigned int local_count;
     unsigned int parameter_count;
+    unsigned int frame_size;
 };
 
 struct DynAstProgram {

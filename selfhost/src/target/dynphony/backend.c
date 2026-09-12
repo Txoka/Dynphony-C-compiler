@@ -4,6 +4,7 @@
 #define DYN_INVALID_NODE 0xffffffffu
 
 struct DynEmitter {
+    const struct DynAstProgram *program;
     char *output;
     unsigned int capacity;
     unsigned int position;
@@ -94,15 +95,16 @@ static void dyn_compare_zero(struct DynEmitter *e, unsigned int reg) {
     dyn_byte(e, 0x3au); dyn_byte(e, reg); dyn_u16(e, 0u);
 }
 
-static void dyn_local_address(struct DynEmitter *e, unsigned int local) {
+static void dyn_local_address(struct DynEmitter *e, unsigned int local,
+                              unsigned int destination) {
     unsigned int offset;
     if (local < e->current_local_base) { e->error = 1; return; }
-    offset = (local - e->current_local_base + 1u) * 4u;
+    offset = e->program->locals[local].offset;
     if (offset <= 65535u)
-        dyn_alu_immediate(e, 0x25u, 7u, 12u, offset);
+        dyn_alu_immediate(e, 0x25u, destination, 12u, offset);
     else {
-        dyn_constant(e, 7u, offset);
-        dyn_alu(e, 0x25u, 7u, 12u, 7u);
+        dyn_constant(e, destination, offset);
+        dyn_alu(e, 0x25u, destination, 12u, destination);
     }
 }
 
@@ -193,6 +195,44 @@ static void dyn_divide(struct DynEmitter *e, unsigned int reg,
 
 static void dyn_expression(struct DynEmitter *e,
                            const struct DynAstProgram *program,
+                           unsigned int index, unsigned int reg);
+
+static void dyn_lvalue_address(struct DynEmitter *e,
+                               const struct DynAstProgram *program,
+                               unsigned int index, unsigned int reg) {
+    const struct DynNode *node;
+    if (index >= program->count || reg >= 6u) { e->error = 1; return; }
+    node = &program->nodes[index];
+    if (node->kind == DYN_NODE_LOCAL) {
+        dyn_local_address(e, node->value, reg);
+    } else if (node->kind == DYN_NODE_DEREFERENCE) {
+        dyn_expression(e, program, node->left, reg);
+    } else if (node->kind == DYN_NODE_SUBSCRIPT) {
+        dyn_expression(e, program, node->left, reg);
+        dyn_push(e, reg);
+        dyn_expression(e, program, node->right, reg + 1u);
+        dyn_pop(e, reg);
+        if (node->value == 2u)
+            dyn_alu_immediate(e, 0x27u, reg + 1u, reg + 1u, 1u);
+        else if (node->value == 4u)
+            dyn_alu_immediate(e, 0x27u, reg + 1u, reg + 1u, 2u);
+        else if (node->value != 1u) { e->error = 1; return; }
+        dyn_alu(e, 0x24u, reg, reg, reg + 1u);
+    } else e->error = 1;
+}
+
+static unsigned int dyn_lvalue_size(const struct DynAstProgram *program,
+                                    unsigned int index) {
+    const struct DynNode *node = &program->nodes[index];
+    if (node->kind == DYN_NODE_LOCAL)
+        return program->locals[node->value].size;
+    if (node->kind == DYN_NODE_DEREFERENCE || node->kind == DYN_NODE_SUBSCRIPT)
+        return node->value;
+    return 4u;
+}
+
+static void dyn_expression(struct DynEmitter *e,
+                           const struct DynAstProgram *program,
                            unsigned int index, unsigned int reg) {
     const struct DynNode *node;
     unsigned int operation = 0;
@@ -203,7 +243,10 @@ static void dyn_expression(struct DynEmitter *e,
     if (node->kind == DYN_NODE_NUMBER) { dyn_constant(e, reg, node->value); return; }
     if (node->kind == DYN_NODE_LOCAL) {
         if (node->value >= program->local_count) { e->error = 1; return; }
-        dyn_local_address(e, node->value);
+        dyn_local_address(e, node->value, 7u);
+        if (program->locals[node->value].array) {
+            dyn_move(e, reg, 7u); return;
+        }
         dyn_byte(e, dyn_memory_operation(program->locals[node->value].size, 0));
         dyn_byte(e, reg << 4); dyn_byte(e, 7u); return;
     }
@@ -264,20 +307,30 @@ static void dyn_expression(struct DynEmitter *e,
         return;
     }
     if (node->kind == DYN_NODE_ASSIGN) {
+        unsigned int size;
         dyn_expression(e, program, node->right, reg);
         if (node->left >= program->count
-            || program->nodes[node->left].kind != DYN_NODE_LOCAL)
+            || (program->nodes[node->left].kind != DYN_NODE_LOCAL
+                && program->nodes[node->left].kind != DYN_NODE_DEREFERENCE
+                && program->nodes[node->left].kind != DYN_NODE_SUBSCRIPT))
             e->error = 1;
         else {
-            unsigned int local = program->nodes[node->left].value;
-            if (local >= program->local_count) e->error = 1;
-            else {
-                dyn_local_address(e, local);
-                dyn_byte(e, dyn_memory_operation(program->locals[local].size, 1));
-                dyn_byte(e, reg); dyn_byte(e, 7u);
-            }
+            dyn_push(e, reg);
+            dyn_lvalue_address(e, program, node->left, reg + 1u);
+            dyn_pop(e, reg);
+            size = dyn_lvalue_size(program, node->left);
+            dyn_byte(e, dyn_memory_operation(size, 1));
+            dyn_byte(e, reg); dyn_byte(e, reg + 1u);
         }
         return;
+    }
+    if (node->kind == DYN_NODE_ADDRESS) {
+        dyn_lvalue_address(e, program, node->left, reg); return;
+    }
+    if (node->kind == DYN_NODE_DEREFERENCE || node->kind == DYN_NODE_SUBSCRIPT) {
+        dyn_lvalue_address(e, program, index, reg);
+        dyn_byte(e, dyn_memory_operation(node->value, 0));
+        dyn_byte(e, reg << 4); dyn_byte(e, reg); return;
     }
     if (node->kind == DYN_NODE_POST_INCREMENT) {
         unsigned int local;
@@ -291,7 +344,7 @@ static void dyn_expression(struct DynEmitter *e,
         dyn_alu_immediate(
             e, node->value ? 0x24u : 0x25u, temporary, reg, 1u
         );
-        dyn_local_address(e, local);
+        dyn_local_address(e, local, 7u);
         dyn_byte(e, dyn_memory_operation(program->locals[local].size, 1));
         dyn_byte(e, temporary); dyn_byte(e, 7u);
         return;
@@ -457,6 +510,7 @@ int dyn_emit_image(const struct DynIrModule *module, unsigned int load_address,
     unsigned int index;
     unsigned int halt;
     unsigned int function_index;
+    e.program = module->program;
     e.output = output; e.capacity = capacity; e.position = 0;
     e.load_address = load_address; e.return_capacity = module->program->count + 1u;
     e.returns = calloc(e.return_capacity, sizeof(unsigned int));
@@ -500,7 +554,7 @@ int dyn_emit_image(const struct DynIrModule *module, unsigned int load_address,
         e.current_local_base = function->local_base;
         dyn_push(&e, 12u);
         dyn_move(&e, 12u, 14u);
-        frame_size = function->local_count * 4u;
+        frame_size = function->frame_size;
         if (frame_size <= 65535u)
             dyn_alu_immediate(&e, 0x25u, 14u, 14u, frame_size);
         else {
@@ -510,7 +564,7 @@ int dyn_emit_image(const struct DynIrModule *module, unsigned int load_address,
         index = 0;
         while (index < function->parameter_count) {
             if (index >= 6u) { e.error = 1; break; }
-            dyn_local_address(&e, function->local_base + index);
+            dyn_local_address(&e, function->local_base + index, 7u);
             dyn_byte(&e, dyn_memory_operation(
                 module->program->locals[function->local_base + index].size, 1
             ));

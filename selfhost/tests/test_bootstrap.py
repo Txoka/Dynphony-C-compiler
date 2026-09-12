@@ -213,6 +213,23 @@ class BootstrapCompilerTests(unittest.TestCase):
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(), 21)
 
+    def test_fixed_arrays_address_dereference_and_subscript(self):
+        source = b"""int main(void) {
+            int values[5];
+            int index = 0;
+            while (index < 5) {
+                values[index] = index * index;
+                index++;
+            }
+            int *pointer = &values[3];
+            *pointer += 4;
+            return values[3] + *pointer + values[4];
+        }"""
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(max_steps=500_000), 42)
+
 
 if __name__ == "__main__":
     unittest.main()

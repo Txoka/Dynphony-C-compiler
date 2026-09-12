@@ -7,6 +7,7 @@ struct DynParser {
     struct DynAstProgram *program;
     int error;
     unsigned int local_base;
+    unsigned int frame_size;
 };
 
 static void dyn_restore_lexer(
@@ -79,25 +80,36 @@ static int dyn_token_word(const struct DynParser *parser, const char *word) {
     return index == token->length;
 }
 
+static unsigned int dyn_find_local_from(
+    const struct DynParser *parser,
+    unsigned int position,
+    unsigned int length,
+    unsigned int index
+) {
+    const struct DynLocal *local;
+    if (index >= parser->program->local_count) return DYN_INVALID_NODE;
+    local = &parser->program->locals[index];
+    if (dyn_same_name(
+        parser, local->position, local->length, position, length
+    )) return index;
+    return dyn_find_local_from(parser, position, length, index + 1u);
+}
+
 static unsigned int dyn_find_local(
     const struct DynParser *parser,
     unsigned int position,
     unsigned int length
 ) {
-    unsigned int index = parser->program->local_count;
-    while (index) {
-        const struct DynLocal *local;
-        index -= 1u;
-        if (index < parser->local_base) break;
-        local = &parser->program->locals[index];
-        if (dyn_same_name(
-            parser, local->position, local->length, position, length
-        )) return index;
-    }
-    return DYN_INVALID_NODE;
+    return dyn_find_local_from(
+        parser, position, length, parser->local_base
+    );
 }
 
-static unsigned int dyn_add_local(struct DynParser *parser, unsigned int size) {
+static unsigned int dyn_add_local(
+    struct DynParser *parser,
+    unsigned int size,
+    int pointer
+) {
     unsigned int index;
     struct DynLocal *local;
     if (parser->program->local_count >= parser->program->local_capacity) {
@@ -109,6 +121,12 @@ static unsigned int dyn_add_local(struct DynParser *parser, unsigned int size) {
     local->position = parser->lexer.current.position;
     local->length = parser->lexer.current.length;
     local->size = size;
+    local->element_size = size;
+    local->count = 1u;
+    local->array = 0;
+    local->pointer = pointer;
+    parser->frame_size += 4u;
+    local->offset = parser->frame_size;
     if (dyn_find_local(
         parser, local->position, local->length
     ) != DYN_INVALID_NODE) {
@@ -325,6 +343,21 @@ static unsigned int dyn_scalar_type(struct DynParser *parser) {
 
 static unsigned int dyn_postfix(struct DynParser *parser) {
     unsigned int operand = dyn_primary(parser);
+    while (parser->lexer.current.kind == DYN_TOK_LBRACKET) {
+        unsigned int subscript;
+        unsigned int element_size = 4u;
+        dyn_lexer_next(&parser->lexer);
+        subscript = dyn_expression(parser);
+        dyn_take(parser, DYN_TOK_RBRACKET);
+        if (operand < parser->program->count
+            && parser->program->nodes[operand].kind == DYN_NODE_LOCAL)
+            element_size = parser->program->locals[
+                parser->program->nodes[operand].value
+            ].element_size;
+        operand = dyn_new_node(
+            parser, DYN_NODE_SUBSCRIPT, element_size, operand, subscript
+        );
+    }
     while (
         parser->lexer.current.kind == DYN_TOK_PLUS_PLUS
         || parser->lexer.current.kind == DYN_TOK_MINUS_MINUS
@@ -405,9 +438,27 @@ static unsigned int dyn_unary(struct DynParser *parser) {
         && token != DYN_TOK_BANG
         && token != DYN_TOK_PLUS_PLUS
         && token != DYN_TOK_MINUS_MINUS
+        && token != DYN_TOK_AMP
+        && token != DYN_TOK_STAR
     ) return dyn_postfix(parser);
     dyn_lexer_next(&parser->lexer);
     operand = dyn_unary(parser);
+    if (token == DYN_TOK_AMP)
+        return dyn_new_node(
+            parser, DYN_NODE_ADDRESS, 0, operand, DYN_INVALID_NODE
+        );
+    if (token == DYN_TOK_STAR) {
+        unsigned int size = 4u;
+        if (operand < parser->program->count
+            && parser->program->nodes[operand].kind == DYN_NODE_LOCAL)
+            size = parser->program->locals[
+                parser->program->nodes[operand].value
+            ].element_size;
+        return dyn_new_node(
+            parser, DYN_NODE_DEREFERENCE, size,
+            operand, DYN_INVALID_NODE
+        );
+    }
     if (token == DYN_TOK_PLUS_PLUS || token == DYN_TOK_MINUS_MINUS)
         return dyn_increment(parser, operand, token == DYN_TOK_PLUS_PLUS);
     kind = DYN_NODE_POSITIVE;
@@ -606,7 +657,9 @@ static unsigned int dyn_assignment(struct DynParser *parser) {
         int operation = DYN_NODE_ADD;
         if (
             left == DYN_INVALID_NODE
-            || parser->program->nodes[left].kind != DYN_NODE_LOCAL
+            || (parser->program->nodes[left].kind != DYN_NODE_LOCAL
+                && parser->program->nodes[left].kind != DYN_NODE_DEREFERENCE
+                && parser->program->nodes[left].kind != DYN_NODE_SUBSCRIPT)
         ) parser->error = 1;
         dyn_lexer_next(&parser->lexer);
         right = dyn_assignment(parser);
@@ -660,16 +713,37 @@ static unsigned int dyn_declaration(struct DynParser *parser) {
     unsigned int local;
     unsigned int initializer;
     unsigned int size = dyn_scalar_type(parser);
+    unsigned int element_size = size;
+    int pointer = 0;
     while (parser->lexer.current.kind == DYN_TOK_STAR) {
         size = 4u;
+        pointer = 1;
         dyn_lexer_next(&parser->lexer);
     }
     if (parser->lexer.current.kind != DYN_TOK_IDENTIFIER) {
         parser->error = 1;
         return DYN_INVALID_NODE;
     }
-    local = dyn_add_local(parser, size);
+    local = dyn_add_local(parser, size, pointer);
     dyn_lexer_next(&parser->lexer);
+    if (parser->lexer.current.kind == DYN_TOK_LBRACKET) {
+        unsigned int bound;
+        unsigned int count;
+        dyn_lexer_next(&parser->lexer);
+        bound = dyn_expression(parser);
+        dyn_take(parser, DYN_TOK_RBRACKET);
+        if (!dyn_evaluate(parser->program, bound, &count) || !count) {
+            parser->error = 1;
+            count = 1u;
+        }
+        parser->frame_size -= 4u;
+        parser->frame_size += (element_size * count + 3u) & 0xfffffffcu;
+        parser->program->locals[local].offset = parser->frame_size;
+        parser->program->locals[local].element_size = element_size;
+        parser->program->locals[local].count = count;
+        parser->program->locals[local].array = 1;
+        parser->program->locals[local].size = element_size;
+    }
     if (parser->lexer.current.kind == DYN_TOK_ASSIGN) {
         dyn_lexer_next(&parser->lexer);
         initializer = dyn_assignment(parser);
@@ -812,6 +886,7 @@ int dyn_parse(
     parser.program = program;
     parser.error = 0;
     parser.local_base = 0;
+    parser.frame_size = 0;
     program->count = 0;
     program->local_count = 0;
     program->function_count = 0;
@@ -843,22 +918,25 @@ int dyn_parse(
         dyn_take(&parser, DYN_TOK_LPAREN);
         local_base = program->local_count;
         parser.local_base = local_base;
+        parser.frame_size = 0;
         if (parser.lexer.current.kind == DYN_TOK_VOID) {
             dyn_lexer_next(&parser.lexer);
         } else while (
             parser.lexer.current.kind != DYN_TOK_RPAREN && !parser.error
         ) {
             unsigned int parameter_size = dyn_scalar_type(&parser);
+            int parameter_pointer = 0;
             if (!parameter_size) { parser.error = 1; break; }
             while (parser.lexer.current.kind == DYN_TOK_STAR) {
                 parameter_size = 4u;
+                parameter_pointer = 1;
                 dyn_lexer_next(&parser.lexer);
             }
             if (parser.lexer.current.kind != DYN_TOK_IDENTIFIER) {
                 parser.error = 1;
                 break;
             }
-            dyn_add_local(&parser, parameter_size);
+            dyn_add_local(&parser, parameter_size, parameter_pointer);
             parameter_count += 1u;
             dyn_lexer_next(&parser.lexer);
             if (parser.lexer.current.kind != DYN_TOK_COMMA) break;
@@ -884,6 +962,7 @@ int dyn_parse(
         } else {
             function->body = dyn_statement(&parser);
             function->local_count = program->local_count - local_base;
+            function->frame_size = parser.frame_size;
             if (dyn_same_name(
                 &parser, name_position, name_length,
                 name_position, 4u

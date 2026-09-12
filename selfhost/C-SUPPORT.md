@@ -4,7 +4,7 @@ This document describes C accepted **by the compiler in `selfhost/`**, not the
 larger subset accepted by the Python compiler that currently builds it. Every
 new self-hosting language feature should be added here with an execution test.
 
-## Current stage: stage 0.6
+## Current stage: stage 0.7
 
 Stage 0.3 accepts exactly one translation unit containing one `main` definition.
 The original constant-return form remains supported:
@@ -61,14 +61,17 @@ The runtime-code path additionally supports:
 - Multiple scalar function definitions, prototypes with named parameters,
   forward calls, nested calls, and recursion. Up to six scalar arguments use
   `r1` through `r6`; parameters and locals are saved in per-call stack frames.
+- One-dimensional fixed local arrays with constant bounds, array-to-pointer
+  decay, address-of, pointer dereference, and scaled subscripting. Array element
+  loads and stores honor `char`, `short`, and word widths.
 - Runtime arithmetic (including software multiply/divide/remainder), shifts,
   bitwise operations, comparisons, logical operators, conditional expressions,
   and comma expressions.
 
 Local scopes are not separated yet. Deep expressions that exhaust scratch
 registers and calls with stack-passed arguments are rejected rather than
-spilled. Arrays, pointer operations, structures, enums, typedefs, globals, and
-multiple translation units remain unsupported.
+spilled. General pointer arithmetic, multidimensional arrays, VLAs, structures,
+enums, typedefs, globals, and multiple translation units remain unsupported.
 
 ### Pipeline and generated code
 

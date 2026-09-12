@@ -1,4 +1,4 @@
-# Dynphony compiler in C: stage 0.7
+# Dynphony compiler in C: stage 0.8
 
 This directory is the start of the self-hosting compiler. Its layout mirrors the
 Python implementation where that separation is already useful:
@@ -82,6 +82,7 @@ Aggregate types and stack-passed arguments are subsequent bootstrap layers.
 Fixed local arrays now receive byte-accurate frame storage and support decay,
 address-of, dereference, and scaled subscripting. This is the shared lvalue
 foundation for pointers, structures, VLAs, and heap-backed compiler arenas.
+Compound blocks also maintain lexical scope and support local shadowing.
 
 Scalar type spellings, pointer-shaped local declarators, basic casts and
 `sizeof`, and all low-level Dynphony device intrinsics are also accepted. Full

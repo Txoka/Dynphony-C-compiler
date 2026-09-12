@@ -230,6 +230,19 @@ class BootstrapCompilerTests(unittest.TestCase):
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(max_steps=500_000), 42)
 
+    def test_nested_scope_shadowing(self):
+        source = b"""int main(void) {
+            int value = 2;
+            { int value = 5; output(value); }
+            output(value);
+            return value;
+        }"""
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 2)
+        self.assertEqual(program.outputs, [5, 2])
+
 
 if __name__ == "__main__":
     unittest.main()

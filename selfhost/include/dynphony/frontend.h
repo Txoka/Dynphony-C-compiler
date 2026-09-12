@@ -158,6 +158,7 @@ struct DynLocal {
     unsigned int offset;
     int array;
     int pointer;
+    unsigned int scope_depth;
 };
 
 struct DynFunction {

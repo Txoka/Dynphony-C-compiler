@@ -4,7 +4,7 @@ This document describes C accepted **by the compiler in `selfhost/`**, not the
 larger subset accepted by the Python compiler that currently builds it. Every
 new self-hosting language feature should be added here with an execution test.
 
-## Current stage: stage 0.7
+## Current stage: stage 0.8
 
 Stage 0.3 accepts exactly one translation unit containing one `main` definition.
 The original constant-return form remains supported:
@@ -68,10 +68,11 @@ The runtime-code path additionally supports:
   bitwise operations, comparisons, logical operators, conditional expressions,
   and comma expressions.
 
-Local scopes are not separated yet. Deep expressions that exhaust scratch
-registers and calls with stack-passed arguments are rejected rather than
-spilled. General pointer arithmetic, multidimensional arrays, VLAs, structures,
-enums, typedefs, globals, and multiple translation units remain unsupported.
+Compound statements introduce lexical scopes and inner locals may shadow outer
+locals. Deep expressions that exhaust scratch registers and calls with
+stack-passed arguments are rejected rather than spilled. General pointer
+arithmetic, multidimensional arrays, VLAs, structures, enums, typedefs, globals,
+and multiple translation units remain unsupported.
 
 ### Pipeline and generated code
 

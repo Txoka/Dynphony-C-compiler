@@ -611,6 +611,7 @@ def inline_single_call_functions(module):
     """Relocate non-recursive functions having exactly one direct call site."""
     functions = {function.name: function for function in module.functions}
     call_sites = {name: [] for name in functions}
+    direct_edges = {name: set() for name in functions}
     observable_addresses = {
         symbol
         for global_ in module.globals
@@ -628,21 +629,44 @@ def inline_single_call_functions(module):
             for position, value in enumerate(instruction.args):
                 uses.setdefault(value, []).append((instruction, position))
         for instruction in caller.instructions:
-            if instruction.op == "direct_call" and instruction.extra in functions:
+            if (
+                instruction.op in ("direct_call", "direct_tailcall")
+                and instruction.extra in functions
+            ):
                 call_sites[instruction.extra].append((caller, instruction))
+                direct_edges[caller.name].add(instruction.extra)
         for value, definition in definitions.items():
             if definition.op != "global_addr" or definition.extra not in functions:
                 continue
             for user, position in uses.get(value, ()):
                 observable_addresses.add(definition.extra)
 
+    def reaches(start, target):
+        pending = list(direct_edges[start])
+        seen = set()
+        while pending:
+            name = pending.pop()
+            if name == target:
+                return True
+            if name in seen:
+                continue
+            seen.add(name)
+            pending.extend(direct_edges.get(name, ()))
+        return False
+
     candidates = {}
     for function in module.functions:
+        caller = (
+            call_sites[function.name][0][0]
+            if len(call_sites[function.name]) == 1
+            else None
+        )
         if (
             function.name != "_start"
             and function.name not in observable_addresses
-            and len(call_sites[function.name]) == 1
-            and call_sites[function.name][0][0] is not function
+            and caller is not None
+            and caller is not function
+            and not reaches(function.name, caller.name)
             and not any(
                 i.op in ("startup", "halt")
                 for i in function.instructions

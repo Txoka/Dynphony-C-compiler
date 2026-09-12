@@ -944,6 +944,16 @@ class EncodingTests(unittest.TestCase):
         machine = Machine(result.image.binary, inputs=[10])
         self.assertEqual(machine.run(result.image.symbols["_halt"]), 55)
 
+    def test_mutual_tail_recursion_is_not_repeatedly_inlined(self):
+        result = compile_source(
+            "int odd(int n); "
+            "int even(int n){if(!n)return 1;return odd(n-1);} "
+            "int odd(int n){if(!n)return 0;return even(n-1);} "
+            "int main(void){return even(input());}"
+        )
+        machine = Machine(result.image.binary, inputs=[7])
+        self.assertEqual(machine.run(result.image.symbols["_halt"]), 0)
+
     def test_no_growth_comparison_and_division_identities(self):
         result = compile_source(
             "int main(void){int x=input();return (x==x)+(x!=x)+(x/1)+(x%1);}"

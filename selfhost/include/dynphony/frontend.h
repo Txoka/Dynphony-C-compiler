@@ -140,7 +140,8 @@ enum DynNodeKind {
     DYN_NODE_DO,
     DYN_NODE_BREAK,
     DYN_NODE_CONTINUE,
-    DYN_NODE_EXPRESSION
+    DYN_NODE_EXPRESSION,
+    DYN_NODE_VLA_ALLOC
 };
 
 struct DynNode {
@@ -151,6 +152,7 @@ struct DynNode {
     unsigned int extra;
     unsigned int dimension_start;
     unsigned int dimension_count;
+    unsigned int stride_node;
 };
 
 struct DynLocal {
@@ -165,6 +167,8 @@ struct DynLocal {
     unsigned int struct_id;
     unsigned int dimension_start;
     unsigned int dimension_count;
+    unsigned int total_size_node;
+    int vla;
     unsigned int scope_depth;
 };
 
@@ -238,6 +242,8 @@ struct DynMember {
 struct DynDimension {
     unsigned int count;
     unsigned int stride;
+    unsigned int count_node;
+    unsigned int stride_node;
 };
 
 struct DynAstProgram {

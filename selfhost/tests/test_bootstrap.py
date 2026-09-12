@@ -215,6 +215,20 @@ class BootstrapCompilerTests(unittest.TestCase):
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(), 21)
 
+    def test_stack_passed_arguments(self):
+        source = b'''int sum8(int a, int b, int c, int d,
+            int e, int f, int g, int h) {
+            return a + b + c + d + e + f + g + h;
+        }
+        int main(void) {
+            return sum8(1, 2, 3, 4, 5, 6, 7, 8)
+                + sum8(1, 1, 1, 1, 1, 1, 1, 1);
+        }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 44)
+
     def test_fixed_arrays_address_dereference_and_subscript(self):
         source = b"""int main(void) {
             int values[5];
@@ -389,6 +403,42 @@ class BootstrapCompilerTests(unittest.TestCase):
             bytes.values[1][2] = 12;
             return global_values[1][2] + local_values[1][2]
                 + bytes.values[1][2];
+        }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 42)
+
+    def test_runtime_multidimensional_vla(self):
+        source = b'''int main(void) {
+            unsigned int rows = input();
+            unsigned int columns = input();
+            int values[rows][columns];
+            values[1][2] = 37;
+            values[0][1] = 5;
+            return values[1][2] + values[0][1];
+        }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(
+            binary, load_address=control.program_load_address, inputs=[2, 3]
+        )
+        self.assertEqual(program.run(), 42)
+
+    def test_vla_sizeof_and_array_parameter_stride(self):
+        source = b'''unsigned int row_size(
+            unsigned int rows, unsigned int columns,
+            int values[rows][columns]
+        ) {
+            return sizeof(*values);
+        }
+        int main(void) {
+            unsigned int rows = 2;
+            unsigned int columns = 3;
+            int values[rows][columns];
+            values[1][2] = 6;
+            return sizeof(values) + row_size(rows, columns, values)
+                + values[1][2];
         }'''
         status, compiler, binary, control = run_stage0(self.compiler, source)
         self.assertEqual(status, 0)

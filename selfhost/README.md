@@ -75,9 +75,10 @@ The dynamic-code path supports stack-backed scalar locals, assignments, all basi
 loop forms and loop control, runtime arithmetic/comparison/logical expressions,
 and direct device intrinsics. Multiplication and unsigned division are expanded
 into software instruction sequences. It is intentionally unoptimized and uses
-correctness-first stack frames. Scalar functions, forward prototypes, six
-register arguments, nested calls, and recursion use the normal Dynphony ABI.
-Aggregate types and stack-passed arguments are subsequent bootstrap layers.
+correctness-first stack frames. Scalar functions, forward prototypes, nested
+calls, and recursion use the normal Dynphony ABI. The first six scalar
+arguments use registers and additional arguments use the caller's stack.
+Aggregate arguments and returns are subsequent bootstrap layers.
 
 Fixed local arrays now receive byte-accurate frame storage and support decay,
 address-of, dereference, and scaled subscripting. This is the shared lvalue
@@ -99,13 +100,15 @@ lvalues. A previously defined structure can also receive a file-scope typedef.
 Forward structure declarations and pointer typedefs are supported, including an
 opaque pointer typedef completed by a later structure definition.
 Fixed multidimensional arrays carry explicit per-dimension strides and work in
-local frames, static storage, and structure members.
+local frames, static storage, and structure members. Local variable-length
+arrays compute their allocation size and multidimensional row strides at run
+time; `sizeof` preserves those runtime sizes, including through array
+parameters.
 
 ## Next bootstrap stages
 
-The next useful increments are VLAs and fuller aggregate semantics, then
-preprocessing and
-multiple-translation-unit linking.
+The next useful increments are fuller aggregate semantics and exact block-scope
+VLA lifetime, then preprocessing and multiple-translation-unit linking.
 Once this C implementation accepts all constructs used by its own sources, its
 emitted compiler can compile the same sources again; a reproducible
 stage-2/stage-3 binary comparison will then establish self-hosting.

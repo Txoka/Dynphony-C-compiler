@@ -16,6 +16,11 @@ struct DynEmitter {
     unsigned int break_count;
     unsigned int continue_count;
     unsigned int loop_depth;
+    unsigned int current_local_base;
+    unsigned int *function_offsets;
+    unsigned int *call_fixups;
+    unsigned int *call_targets;
+    unsigned int call_count;
     int error;
 };
 
@@ -42,6 +47,16 @@ static void dyn_alu_immediate(struct DynEmitter *e, unsigned int op,
 
 static void dyn_move(struct DynEmitter *e, unsigned int d, unsigned int s) {
     dyn_alu(e, 0x21u, d, 0u, s);
+}
+
+static void dyn_push(struct DynEmitter *e, unsigned int reg) {
+    dyn_alu_immediate(e, 0x25u, 14u, 14u, 4u);
+    dyn_byte(e, 0x66u); dyn_byte(e, reg); dyn_byte(e, 14u);
+}
+
+static void dyn_pop(struct DynEmitter *e, unsigned int reg) {
+    dyn_byte(e, 0x62u); dyn_byte(e, reg << 4); dyn_byte(e, 14u);
+    dyn_alu_immediate(e, 0x24u, 14u, 14u, 4u);
 }
 
 static void dyn_constant_at(struct DynEmitter *e, unsigned int position,
@@ -77,6 +92,42 @@ static void dyn_patch(struct DynEmitter *e, unsigned int fixup,
 
 static void dyn_compare_zero(struct DynEmitter *e, unsigned int reg) {
     dyn_byte(e, 0x3au); dyn_byte(e, reg); dyn_u16(e, 0u);
+}
+
+static void dyn_local_address(struct DynEmitter *e, unsigned int local) {
+    unsigned int offset;
+    if (local < e->current_local_base) { e->error = 1; return; }
+    offset = (local - e->current_local_base + 1u) * 4u;
+    if (offset <= 65535u)
+        dyn_alu_immediate(e, 0x25u, 7u, 12u, offset);
+    else {
+        dyn_constant(e, 7u, offset);
+        dyn_alu(e, 0x25u, 7u, 12u, 7u);
+    }
+}
+
+static void dyn_call(struct DynEmitter *e, unsigned int function) {
+    unsigned int fixup;
+    if (e->call_count >= e->return_capacity) { e->error = 1; return; }
+    fixup = e->position; dyn_constant(e, 7u, 0u);
+    e->call_fixups[e->call_count] = fixup;
+    e->call_targets[e->call_count] = function;
+    e->call_count += 1u;
+    dyn_byte(e, 0x07u); dyn_byte(e, 0xf0u);
+    dyn_alu_immediate(e, 0x24u, 15u, 15u, 16u);
+    dyn_push(e, 15u);
+    dyn_byte(e, 0x48u); dyn_byte(e, 0x0fu); dyn_byte(e, 7u);
+}
+
+static void dyn_return_instruction(struct DynEmitter *e) {
+    dyn_pop(e, 15u);
+    dyn_byte(e, 0x48u); dyn_byte(e, 0x0fu); dyn_byte(e, 15u);
+}
+
+static unsigned int dyn_memory_operation(unsigned int size, int store) {
+    if (size == 1u) return store ? 0x64u : 0x60u;
+    if (size == 2u) return store ? 0x65u : 0x61u;
+    return store ? 0x66u : 0x62u;
 }
 
 static void dyn_boolean(struct DynEmitter *e, unsigned int reg,
@@ -151,8 +202,10 @@ static void dyn_expression(struct DynEmitter *e,
     node = &program->nodes[index];
     if (node->kind == DYN_NODE_NUMBER) { dyn_constant(e, reg, node->value); return; }
     if (node->kind == DYN_NODE_LOCAL) {
-        if (node->value >= 6u) { e->error = 1; return; }
-        dyn_move(e, reg, 8u + node->value); return;
+        if (node->value >= program->local_count) { e->error = 1; return; }
+        dyn_local_address(e, node->value);
+        dyn_byte(e, dyn_memory_operation(program->locals[node->value].size, 0));
+        dyn_byte(e, reg << 4); dyn_byte(e, 7u); return;
     }
     if (node->kind == DYN_NODE_CALL_INPUT) {
         dyn_byte(e, 0x01u); dyn_byte(e, reg << 4); return;
@@ -183,12 +236,64 @@ static void dyn_expression(struct DynEmitter *e,
         } else e->error = 1;
         return;
     }
+    if (node->kind == DYN_NODE_CALL) {
+        unsigned int count = 0;
+        unsigned int item = node->left;
+        unsigned int wanted;
+        while (item != DYN_INVALID_NODE) {
+            if (item >= program->count || program->nodes[item].kind != DYN_NODE_ARGUMENT) {
+                e->error = 1; return;
+            }
+            count += 1u; item = program->nodes[item].right;
+        }
+        if (count > 6u || node->value >= program->function_count) {
+            e->error = 1; return;
+        }
+        item = node->left;
+        while (item != DYN_INVALID_NODE) {
+            dyn_expression(e, program, program->nodes[item].left, 1u);
+            dyn_push(e, 1u); item = program->nodes[item].right;
+        }
+        wanted = count;
+        while (wanted) {
+            dyn_pop(e, wanted);
+            wanted -= 1u;
+        }
+        dyn_call(e, node->value);
+        if (reg != 1u) dyn_move(e, reg, 1u);
+        return;
+    }
     if (node->kind == DYN_NODE_ASSIGN) {
         dyn_expression(e, program, node->right, reg);
         if (node->left >= program->count
             || program->nodes[node->left].kind != DYN_NODE_LOCAL)
             e->error = 1;
-        else dyn_move(e, 8u + program->nodes[node->left].value, reg);
+        else {
+            unsigned int local = program->nodes[node->left].value;
+            if (local >= program->local_count) e->error = 1;
+            else {
+                dyn_local_address(e, local);
+                dyn_byte(e, dyn_memory_operation(program->locals[local].size, 1));
+                dyn_byte(e, reg); dyn_byte(e, 7u);
+            }
+        }
+        return;
+    }
+    if (node->kind == DYN_NODE_POST_INCREMENT) {
+        unsigned int local;
+        unsigned int temporary = reg + 1u;
+        if (node->left >= program->count || temporary >= 7u
+            || program->nodes[node->left].kind != DYN_NODE_LOCAL) {
+            e->error = 1; return;
+        }
+        local = program->nodes[node->left].value;
+        dyn_expression(e, program, node->left, reg);
+        dyn_alu_immediate(
+            e, node->value ? 0x24u : 0x25u, temporary, reg, 1u
+        );
+        dyn_local_address(e, local);
+        dyn_byte(e, dyn_memory_operation(program->locals[local].size, 1));
+        dyn_byte(e, temporary); dyn_byte(e, 7u);
         return;
     }
     if (node->kind == DYN_NODE_COMMA) {
@@ -223,7 +328,9 @@ static void dyn_expression(struct DynEmitter *e,
         dyn_patch(e, done, e->position); return;
     }
     dyn_expression(e, program, node->left, reg);
+    dyn_push(e, reg);
     dyn_expression(e, program, node->right, reg + 1u);
+    dyn_pop(e, reg);
     if (node->kind == DYN_NODE_MULTIPLY) { dyn_multiply(e, reg); return; }
     if (node->kind == DYN_NODE_DIVIDE) { dyn_divide(e, reg, 0); return; }
     if (node->kind == DYN_NODE_REMAINDER) { dyn_divide(e, reg, 1); return; }
@@ -349,29 +456,92 @@ int dyn_emit_image(const struct DynIrModule *module, unsigned int load_address,
     struct DynEmitter e;
     unsigned int index;
     unsigned int halt;
+    unsigned int function_index;
     e.output = output; e.capacity = capacity; e.position = 0;
     e.load_address = load_address; e.return_capacity = module->program->count + 1u;
     e.returns = calloc(e.return_capacity, sizeof(unsigned int));
     e.breaks = calloc(e.return_capacity, sizeof(unsigned int));
     e.continues = calloc(e.return_capacity, sizeof(unsigned int));
+    e.function_offsets = calloc(
+        module->program->function_count, sizeof(unsigned int)
+    );
+    e.call_fixups = calloc(e.return_capacity, sizeof(unsigned int));
+    e.call_targets = calloc(e.return_capacity, sizeof(unsigned int));
     e.return_count = 0; e.break_count = 0; e.continue_count = 0;
-    e.loop_depth = 0;
-    e.error = e.returns && e.breaks && e.continues ? 0 : 1;
+    e.call_count = 0; e.loop_depth = 0; e.current_local_base = 0;
+    e.error = e.returns && e.breaks && e.continues && e.function_offsets
+        && e.call_fixups && e.call_targets ? 0 : 1;
     if (module->constant) {
         dyn_constant(&e, 1u, module->return_value);
         dyn_constant(&e, 7u, load_address + 24u);
         dyn_byte(&e, 0x48u); dyn_byte(&e, 0x0fu); dyn_byte(&e, 0x07u);
-        *length = e.position; free(e.continues); free(e.breaks); free(e.returns);
+        *length = e.position;
+        free(e.call_targets); free(e.call_fixups); free(e.function_offsets);
+        free(e.continues); free(e.breaks); free(e.returns);
         return e.error ? 0 : 1;
     }
-    dyn_statement(&e, module->program, module->program->expression);
-    dyn_constant(&e, 1u, 0u); halt = e.position;
-    index = 0;
-    while (index < e.return_count) {
-        dyn_patch(&e, e.returns[index], halt); index += 1u;
-    }
+    dyn_alu_immediate(&e, 0x21u, 14u, 0u, 0u);
+    dyn_call(&e, module->program->main_function);
+    halt = e.position;
     dyn_constant(&e, 7u, load_address + halt + 12u);
     dyn_byte(&e, 0x48u); dyn_byte(&e, 0x0fu); dyn_byte(&e, 0x07u);
-    *length = e.position; free(e.continues); free(e.breaks); free(e.returns);
+    function_index = 0;
+    while (function_index < module->program->function_count) {
+        const struct DynFunction *function =
+            &module->program->functions[function_index];
+        unsigned int return_start;
+        unsigned int epilogue;
+        unsigned int frame_size;
+        if (function->body == DYN_INVALID_NODE) {
+            function_index += 1u;
+            continue;
+        }
+        e.function_offsets[function_index] = e.position;
+        e.current_local_base = function->local_base;
+        dyn_push(&e, 12u);
+        dyn_move(&e, 12u, 14u);
+        frame_size = function->local_count * 4u;
+        if (frame_size <= 65535u)
+            dyn_alu_immediate(&e, 0x25u, 14u, 14u, frame_size);
+        else {
+            dyn_constant(&e, 7u, frame_size);
+            dyn_alu(&e, 0x25u, 14u, 14u, 7u);
+        }
+        index = 0;
+        while (index < function->parameter_count) {
+            if (index >= 6u) { e.error = 1; break; }
+            dyn_local_address(&e, function->local_base + index);
+            dyn_byte(&e, dyn_memory_operation(
+                module->program->locals[function->local_base + index].size, 1
+            ));
+            dyn_byte(&e, index + 1u); dyn_byte(&e, 7u);
+            index += 1u;
+        }
+        return_start = e.return_count;
+        dyn_statement(&e, module->program, function->body);
+        dyn_constant(&e, 1u, 0u);
+        epilogue = e.position;
+        index = return_start;
+        while (index < e.return_count) {
+            dyn_patch(&e, e.returns[index], epilogue); index += 1u;
+        }
+        e.return_count = return_start;
+        dyn_move(&e, 14u, 12u);
+        dyn_pop(&e, 12u);
+        dyn_return_instruction(&e);
+        function_index += 1u;
+    }
+    index = 0;
+    while (index < e.call_count) {
+        if (e.call_targets[index] >= module->program->function_count)
+            e.error = 1;
+        else dyn_patch(
+            &e, e.call_fixups[index], e.function_offsets[e.call_targets[index]]
+        );
+        index += 1u;
+    }
+    *length = e.position;
+    free(e.call_targets); free(e.call_fixups); free(e.function_offsets);
+    free(e.continues); free(e.breaks); free(e.returns);
     return e.error ? 0 : 1;
 }

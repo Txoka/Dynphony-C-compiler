@@ -1,4 +1,4 @@
-# Dynphony compiler in C: stage 0.5
+# Dynphony compiler in C: stage 0.6
 
 This directory is the start of the self-hosting compiler. Its layout mirrors the
 Python implementation where that separation is already useful:
@@ -71,12 +71,13 @@ format and status protocol are specified in
 packed, but compilation currently rejects bundles containing more than one
 translation unit.
 
-The first dynamic-code path supports six scalar locals, assignments, all basic
+The dynamic-code path supports stack-backed scalar locals, assignments, all basic
 loop forms and loop control, runtime arithmetic/comparison/logical expressions,
 and direct `input()`/`output()` calls. Multiplication and unsigned division are
 expanded into software instruction sequences. It is intentionally unoptimized
-and register-only; stack frames, general functions, and aggregate types are
-subsequent bootstrap layers.
+and uses correctness-first stack frames. Scalar functions, forward prototypes,
+six register arguments, nested calls, and recursion use the normal Dynphony ABI.
+Aggregate types and stack-passed arguments are subsequent bootstrap layers.
 
 Scalar type spellings, pointer-shaped local declarators, basic casts and
 `sizeof`, and all low-level Dynphony device intrinsics are also accepted. Full

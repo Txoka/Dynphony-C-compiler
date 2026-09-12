@@ -9,6 +9,7 @@ static int dyn_constant_expression(
     node = &program->nodes[index];
     if (node->kind == DYN_NODE_NUMBER) return 1;
     if (node->kind == DYN_NODE_LOCAL || node->kind == DYN_NODE_ASSIGN
+        || node->kind == DYN_NODE_POST_INCREMENT
         || node->kind == DYN_NODE_CALL_INPUT
         || node->kind == DYN_NODE_CALL_OUTPUT
         || node->kind == DYN_NODE_CALL_INTRINSIC) return 0;
@@ -29,7 +30,8 @@ int dyn_lower(
     module->program = program;
     module->constant = 0;
     if (
-        program->expression < program->count
+        program->function_count == 1u
+        && program->expression < program->count
         && program->nodes[program->expression].kind == DYN_NODE_RETURN
         && dyn_constant_expression(
             program, program->nodes[program->expression].left

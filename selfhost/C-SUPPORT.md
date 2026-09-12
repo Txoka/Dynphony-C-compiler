@@ -4,7 +4,7 @@ This document describes C accepted **by the compiler in `selfhost/`**, not the
 larger subset accepted by the Python compiler that currently builds it. Every
 new self-hosting language feature should be added here with an execution test.
 
-## Current stage: stage 0.5
+## Current stage: stage 0.6
 
 Stage 0.3 accepts exactly one translation unit containing one `main` definition.
 The original constant-return form remains supported:
@@ -47,7 +47,7 @@ identifiers currently produce a parse error when used in the stage-0 grammar.
 
 The runtime-code path additionally supports:
 
-- Up to six function-scope scalar locals declared as `int`, `unsigned int`,
+- Stack-backed function-scope scalar locals declared as `int`, `unsigned int`,
   `signed int`, `char`, short/long integer spellings, or pointer-shaped scalar
   declarators, with optional `const` and initializers.
 - Basic scalar cast syntax and `sizeof` for scalar type names and locals. Casts
@@ -55,19 +55,20 @@ The runtime-code path additionally supports:
 - Local reads and simple `=` assignment expressions.
 - Compound blocks, expression statements, `if`/`else`, `while`, `do`, `for`,
   `break`, `continue`, and `return`.
-- Prefix and postfix `++`/`--`, plus simple and compound assignments. Postfix
-  increment currently yields the updated value, a temporary bootstrap
-  divergence when its value is consumed.
+- Prefix and postfix `++`/`--`, plus simple and compound assignments.
 - Direct calls to `input`, `output`, `keyboard`, `screen`, `time`, `time_low`,
   `time_high`, `persistent_load`, and `persistent_store`.
+- Multiple scalar function definitions, prototypes with named parameters,
+  forward calls, nested calls, and recursion. Up to six scalar arguments use
+  `r1` through `r6`; parameters and locals are saved in per-call stack frames.
 - Runtime arithmetic (including software multiply/divide/remainder), shifts,
   bitwise operations, comparisons, logical operators, conditional expressions,
   and comma expressions.
 
-Local scopes are not separated yet, and all locals currently occupy `r8` through
-`r13`. Deep expressions that exhaust scratch registers are rejected rather than
-spilled. Arrays, pointers, user-defined functions, structures, enums, typedefs,
-and multiple translation units remain unsupported.
+Local scopes are not separated yet. Deep expressions that exhaust scratch
+registers and calls with stack-passed arguments are rejected rather than
+spilled. Arrays, pointer operations, structures, enums, typedefs, globals, and
+multiple translation units remain unsupported.
 
 ### Pipeline and generated code
 
@@ -78,6 +79,8 @@ and multiple translation units remain unsupported.
 - The Dynphony backend emits direct, unoptimized ALU and branch instructions.
   Constant-return programs remain 27 bytes; dynamic image size depends on the
   source program.
+- Dynamic images initialize `sp`, call `main` through the normal ABI, and emit
+  frame prologues/epilogues and call/return-address fixups.
 - The compiler itself uses `malloc`, `calloc`, and `free` while running, so its
   AST and source buffers exercise the Dynphony heap.
 

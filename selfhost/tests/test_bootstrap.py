@@ -156,6 +156,63 @@ class BootstrapCompilerTests(unittest.TestCase):
         self.assertEqual(program.persistent_read(4), 12)
         self.assertEqual(program.screen_updates, [(2, 7)])
 
+    def test_stack_backed_locals_and_width_correct_storage(self):
+        source = b"""int main(void) {
+            char a = 258;
+            short b = 2;
+            int c = 3;
+            int d = 4;
+            int e = 5;
+            int f = 6;
+            int g = 7;
+            int h = 8;
+            return a + b + c + d + e + f + g + h;
+        }"""
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 37)
+
+    def test_functions_parameters_nested_calls_and_recursion(self):
+        source = b"""unsigned int factorial(unsigned int value) {
+            if (value <= 1) return 1;
+            return value * factorial(value - 1);
+        }
+        unsigned int combine(unsigned int a, unsigned int b) {
+            return factorial(a) + factorial(b);
+        }
+        int main(void) {
+            return combine(input(), 3);
+        }"""
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(
+            binary, load_address=control.program_load_address, inputs=[5]
+        )
+        self.assertEqual(program.run(max_steps=1_000_000), 126)
+
+    def test_postfix_increment_preserves_old_value(self):
+        source = b"""int main(void) {
+            int value = 3;
+            int old = value++;
+            return old * 10 + value;
+        }"""
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 34)
+
+    def test_forward_prototype_and_six_argument_abi(self):
+        source = b"""int sum(int a, int b, int c, int d, int e, int f);
+        int main(void) { return sum(1, 2, 3, 4, 5, 6); }
+        int sum(int a, int b, int c, int d, int e, int f) {
+            return a + b + c + d + e + f;
+        }"""
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 21)
+
 
 if __name__ == "__main__":
     unittest.main()

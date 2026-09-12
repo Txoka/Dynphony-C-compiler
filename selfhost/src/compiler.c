@@ -116,8 +116,15 @@ int dyn_compile_buffer(
         free(program.nodes);
         return DYN_COMPILE_OUT_OF_MEMORY;
     }
+    program.functions = calloc(capacity, sizeof(struct DynFunction));
+    if (!program.functions) {
+        free(program.locals);
+        free(program.nodes);
+        return DYN_COMPILE_OUT_OF_MEMORY;
+    }
     program.capacity = capacity;
     program.local_capacity = capacity;
+    program.function_capacity = capacity;
 
     if (!dyn_parse(source, length, &program))
         status = DYN_COMPILE_PARSE_ERROR;
@@ -129,6 +136,7 @@ int dyn_compile_buffer(
             &module, load_address, output, output_capacity, output_length
         )) status = DYN_COMPILE_OUTPUT_TOO_SMALL;
     }
+    free(program.functions);
     free(program.locals);
     free(program.nodes);
     return status;

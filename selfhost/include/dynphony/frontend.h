@@ -121,9 +121,12 @@ enum DynNodeKind {
     DYN_NODE_COMMA,
     DYN_NODE_LOCAL,
     DYN_NODE_ASSIGN,
+    DYN_NODE_POST_INCREMENT,
     DYN_NODE_CALL_INPUT,
     DYN_NODE_CALL_OUTPUT,
     DYN_NODE_CALL_INTRINSIC,
+    DYN_NODE_CALL,
+    DYN_NODE_ARGUMENT,
     DYN_NODE_SEQUENCE,
     DYN_NODE_RETURN,
     DYN_NODE_IF,
@@ -149,6 +152,15 @@ struct DynLocal {
     unsigned int size;
 };
 
+struct DynFunction {
+    unsigned int name_position;
+    unsigned int name_length;
+    unsigned int body;
+    unsigned int local_base;
+    unsigned int local_count;
+    unsigned int parameter_count;
+};
+
 struct DynAstProgram {
     struct DynNode *nodes;
     unsigned int count;
@@ -158,6 +170,10 @@ struct DynAstProgram {
     struct DynLocal *locals;
     unsigned int local_count;
     unsigned int local_capacity;
+    struct DynFunction *functions;
+    unsigned int function_count;
+    unsigned int function_capacity;
+    unsigned int main_function;
 };
 
 void dyn_lexer_init(

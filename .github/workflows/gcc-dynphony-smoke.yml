@@ -1,0 +1,89 @@
+name: GCC Dynphony smoke build
+
+on:
+  push:
+    branches: [gcc-backend-bootstrap]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build prerequisites
+        run: sudo apt-get update && sudo apt-get install -y build-essential flex bison libgmp-dev libmpfr-dev libmpc-dev texinfo
+
+      - name: Download GCC 16.2
+        run: |
+          curl -L --retry 3 -o /tmp/gcc.tar.xz https://gcc.gnu.org/pub/gcc/releases/gcc-16.2.0/gcc-16.2.0.tar.xz
+          tar -C /tmp -xf /tmp/gcc.tar.xz
+
+      - name: Inject Dynphony target
+        run: |
+          cp -r experimental/gcc-16-dynphony/gcc/config/dynphony /tmp/gcc-16.2.0/gcc/config/
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('/tmp/gcc-16.2.0/gcc/config.gcc')
+          s = p.read_text()
+          needle = 'case ${target} in\n'
+          stanza = '''case ${target} in\n  moxie-*-elf*)\n    tm_file="${tm_file} elfos.h newlib-stdint.h dynphony/dynphony.h"\n    tmake_file="${tmake_file} dynphony/t-dynphony"\n    target_has_targetm_common=no\n    ;;\n'''
+          if needle not in s:
+              raise SystemExit('config.gcc case anchor not found')
+          s = s.replace(needle, stanza, 1)
+          p.write_text(s)
+          PY
+
+      - name: Configure C-only cross compiler
+        run: |
+          mkdir /tmp/gcc-build
+          cd /tmp/gcc-build
+          /tmp/gcc-16.2.0/configure --target=moxie-unknown-elf --enable-languages=c --without-headers --disable-shared --disable-threads --disable-libssp --disable-libquadmath --disable-libatomic --disable-libstdcxx
+
+      - name: Build GCC
+        run: make -C /tmp/gcc-build -j2 all-gcc
+
+      - name: Compile Towers of Hanoi
+        run: |
+          cat > /tmp/towers.c <<'EOF'
+          extern unsigned input(void);
+          extern void output(unsigned);
+
+          void move_one(unsigned source, unsigned destination) {
+              output(source);
+              output(5);
+              output(destination);
+              output(5);
+          }
+          void move_pile(unsigned highest_disk, unsigned source, unsigned destination, unsigned spare) {
+              if (highest_disk != 0)
+                  move_pile(highest_disk - 1, source, spare, destination);
+              move_one(source, destination);
+              if (highest_disk != 0)
+                  move_pile(highest_disk - 1, spare, destination, source);
+          }
+          int main(void) {
+              unsigned highest_disk = input();
+              unsigned source = input();
+              unsigned destination = input();
+              unsigned spare = input();
+              move_pile(highest_disk, source, destination, spare);
+              return 0;
+          }
+          EOF
+          /tmp/gcc-build/gcc/xgcc -B/tmp/gcc-build/gcc/ -S -O2 -ffreestanding -fno-builtin /tmp/towers.c -o /tmp/towers.s
+          cat /tmp/towers.s
+          python3 - <<'PY'
+          from pathlib import Path
+          s = Path('/tmp/towers.s').read_text()
+          print('ASM_LINES', len(s.splitlines()))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gcc-dynphony-smoke
+          path: |
+            /tmp/towers.s
+            /tmp/gcc-build/gcc/config.log

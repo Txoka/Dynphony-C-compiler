@@ -108,7 +108,14 @@ static void dyn_patch(struct DynEmitter *e, unsigned int fixup,
 }
 
 static void dyn_compare_zero(struct DynEmitter *e, unsigned int reg) {
-    dyn_byte(e, 0x3au); dyn_byte(e, reg); dyn_u16(e, 0u);
+    /* CMP writes the architectural flags register (r15), not r0. */
+    dyn_byte(e, 0x3au); dyn_byte(e, 0xf0u | reg); dyn_u16(e, 0u);
+}
+
+static void dyn_compare(struct DynEmitter *e, unsigned int left,
+                        unsigned int right) {
+    /* The destination nibble of CMP is the flags register, r15. */
+    dyn_byte(e, 0x2au); dyn_byte(e, 0xf0u | left); dyn_byte(e, right);
 }
 
 static void dyn_global_address(struct DynEmitter *e, unsigned int global,
@@ -242,7 +249,7 @@ static void dyn_divide(struct DynEmitter *e, unsigned int reg,
     dyn_alu_immediate(e, 0x28u, reg + 5u, reg, 31u);
     dyn_alu(e, 0x21u, reg + 3u, reg + 3u, reg + 5u);
     dyn_alu_immediate(e, 0x27u, reg, reg, 1u);
-    dyn_byte(e, 0x2au); dyn_byte(e, reg + 3u); dyn_byte(e, reg + 1u);
+    dyn_compare(e, reg + 3u, reg + 1u);
     skip = dyn_branch(e, 0x42u);
     dyn_alu(e, 0x25u, reg + 3u, reg + 3u, reg + 1u);
     dyn_alu_immediate(e, 0x21u, reg + 2u, reg + 2u, 1u);
@@ -647,7 +654,7 @@ static void dyn_expression(struct DynEmitter *e,
         }
         return;
     }
-    dyn_byte(e, 0x2au); dyn_byte(e, reg); dyn_byte(e, reg + 1u);
+    dyn_compare(e, reg, reg + 1u);
     if (node->kind == DYN_NODE_EQUAL) operation = 0x41u;
     else if (node->kind == DYN_NODE_NOT_EQUAL) operation = 0x49u;
     else if (node->kind == DYN_NODE_LESS) operation = 0x42u;

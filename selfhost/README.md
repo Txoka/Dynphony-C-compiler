@@ -131,3 +131,19 @@ the automated parity test requires stages 2 and 3 to be byte-identical. The next
 useful increments are translation-unit-private linkage, fuller aggregate and
 scalar conversion semantics, function pointers, and exact block-scope VLA
 lifetime.
+
+From the repository root, `make selfhost` writes all three bootstrap artifacts:
+
+- `selfhost/build/dyncc-stage0.bin`: the C compiler built by Python.
+- `selfhost/build/dyncc-stage1.bin`: the compiler rebuilt by stage 0.
+- `selfhost/build/dyncc-stage2.bin`: the compiler rebuilt by stage 1.
+
+The repository `make selfhost` target builds these compiler images for RAM
+address `0`, so load stage 0, stage 1, or stage 2 at address `0` and start the
+CPU at address `0`. The compile-and-run project mode must still use a separate
+child load address such as `0x80000` so the generated program does not overwrite
+the compiler.
+
+The build fails unless stage 1 and stage 2 are byte-identical. The stage numbers
+here describe the produced files; older bootstrap documentation may call these
+stages 1, 2, and 3 respectively.

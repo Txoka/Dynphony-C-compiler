@@ -600,7 +600,7 @@ L_GETPC:    s.regs[d->a] = previous; if (d->a == 15) s.comparison_valid = 0; FIN
         RR_BIN(L_SHL_RR,   rhs < 32u ? s.regs[d->b] << rhs : 0u);
         RR_BIN(L_SHR_RR,   rhs < 32u ? s.regs[d->b] >> rhs : 0u);
         RR_BIN(L_SAR_RR,   sar32(s.regs[d->b], rhs));
-L_CMP_RR:  s.comparison_valid = 1; s.comparison_a = s.regs[d->b]; s.comparison_b = s.regs[d->c]; s.regs[d->a] = 0; FINISH_INSN(d->next_pc);
+L_CMP_RR:  if (d->a == 15u) { s.comparison_valid = 1; s.comparison_a = s.regs[d->b]; s.comparison_b = s.regs[d->c]; } s.regs[d->a] = 0; FINISH_INSN(d->next_pc);
 
         RI_BIN(L_NAND_RI, ~(s.regs[d->b] & rhs));
         RI_BIN(L_OR_RI,    s.regs[d->b] | rhs);
@@ -682,10 +682,10 @@ dispatch:
 #define SW_RI(u, expr) case u: rhs=d->imm; s.regs[d->a]=(expr); if(d->a==15)s.comparison_valid=0; FINISH_INSN(d->next_pc)
             SW_RR(U_NAND_RR, ~(s.regs[d->b]&rhs)); SW_RR(U_OR_RR,s.regs[d->b]|rhs); SW_RR(U_AND_RR,s.regs[d->b]&rhs); SW_RR(U_NOR_RR,~(s.regs[d->b]|rhs));
             SW_RR(U_ADD_RR,s.regs[d->b]+rhs); SW_RR(U_SUB_RR,s.regs[d->b]-rhs); SW_RR(U_XOR_RR,s.regs[d->b]^rhs); SW_RR(U_SHL_RR,rhs<32u?s.regs[d->b]<<rhs:0u); SW_RR(U_SHR_RR,rhs<32u?s.regs[d->b]>>rhs:0u); SW_RR(U_SAR_RR,sar32(s.regs[d->b],rhs));
-            case U_CMP_RR: s.comparison_valid=1;s.comparison_a=s.regs[d->b];s.comparison_b=s.regs[d->c];s.regs[d->a]=0;FINISH_INSN(d->next_pc);
+            case U_CMP_RR: if(d->a==15u){s.comparison_valid=1;s.comparison_a=s.regs[d->b];s.comparison_b=s.regs[d->c];} s.regs[d->a]=0;FINISH_INSN(d->next_pc);
             SW_RI(U_NAND_RI, ~(s.regs[d->b]&rhs)); SW_RI(U_OR_RI,s.regs[d->b]|rhs); SW_RI(U_AND_RI,s.regs[d->b]&rhs); SW_RI(U_NOR_RI,~(s.regs[d->b]|rhs));
             SW_RI(U_ADD_RI,s.regs[d->b]+rhs); SW_RI(U_SUB_RI,s.regs[d->b]-rhs); SW_RI(U_XOR_RI,s.regs[d->b]^rhs); SW_RI(U_SHL_RI,rhs<32u?s.regs[d->b]<<rhs:0u); SW_RI(U_SHR_RI,rhs<32u?s.regs[d->b]>>rhs:0u); SW_RI(U_SAR_RI,sar32(s.regs[d->b],rhs));
-            case U_CMP_RI: s.comparison_valid=1;s.comparison_a=s.regs[d->b];s.comparison_b=d->imm;s.regs[d->a]=0;FINISH_INSN(d->next_pc);
+            case U_CMP_RI: if(d->a==15u){s.comparison_valid=1;s.comparison_a=s.regs[d->b];s.comparison_b=d->imm;} s.regs[d->a]=0;FINISH_INSN(d->next_pc);
 #undef SW_RR
 #undef SW_RI
 

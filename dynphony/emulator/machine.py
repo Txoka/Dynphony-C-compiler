@@ -132,8 +132,12 @@ class Machine:
             code = op & 15
             next_pc = pc + (4 if immediate else 3)
             if code == 10:
-                self.comparison = (a, right)
-                # A token, rather than an invented hardware flags bit layout.
+                # CMP is encoded like every other ALU operation.  The ISA
+                # convention is that its destination is r15 (the flags
+                # register); an incorrectly encoded CMP therefore does not
+                # replace the pending comparison used by branches.
+                if dst == 15:
+                    self.comparison = (a, right)
                 r[dst] = 0
             else:
                 operations = {

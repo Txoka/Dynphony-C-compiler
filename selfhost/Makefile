@@ -1,9 +1,11 @@
 PYTHON ?= python
 BUILD_DIR ?= build
 
-.PHONY: all stage0 demo pack test clean
+.PHONY: all stages stage0 stage1-stage2 demo pack test clean
 
-all: stage0
+all: stages
+
+stages: stage0 stage1-stage2
 
 stage0:
 	mkdir -p $(BUILD_DIR)
@@ -15,6 +17,11 @@ stage0:
 		selfhost/src/middle/optimize.c \
 		selfhost/src/target/dynphony/backend.c \
 		-I selfhost/include -o selfhost/$(BUILD_DIR)/dyncc-stage0.bin
+
+stage1-stage2: stage0
+	cd .. && $(PYTHON) selfhost/tools/build_stages.py \
+		--stage0 selfhost/$(BUILD_DIR)/dyncc-stage0.bin \
+		--output-dir selfhost/$(BUILD_DIR) --load-address 0
 
 demo:
 	cd .. && $(PYTHON) selfhost/tools/bootstrap.py

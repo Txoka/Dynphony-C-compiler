@@ -31,7 +31,7 @@ jobs:
           cp experimental/gcc-16-dynphony/gcc/config/dynphony/dynphony.cc /tmp/gcc-16.2.0/gcc/config/moxie/moxie.cc
           cp experimental/gcc-16-dynphony/gcc/config/dynphony/dynphony.h /tmp/gcc-16.2.0/gcc/config/moxie/moxie.h
           cp experimental/gcc-16-dynphony/gcc/config/dynphony/dynphony-protos.h /tmp/gcc-16.2.0/gcc/config/moxie/moxie-protos.h
-          cp experimental/gcc-16-dynphony/gcc/config/dynphony/dynphony-protos.h /tmp/gcc-16.2.0/gcc/config/moxie/dynphony-protos.h
+          cp experimental/gcc-16-dynphony/gcc/config/dynphony/dynphony-protos.h /tmp/gcc-16.2.0/gcc/dynphony-protos.h
           cp experimental/gcc-16-dynphony/gcc/config/dynphony/dynphony.opt /tmp/gcc-16.2.0/gcc/config/moxie/moxie.opt
 
       - name: Verify injected backend sources
@@ -39,6 +39,7 @@ jobs:
           grep -q 'Dynphony GCC machine description' /tmp/gcc-16.2.0/gcc/config/moxie/moxie.md
           grep -q 'GCC Dynphony target' /tmp/gcc-16.2.0/gcc/config/moxie/moxie.h
           grep -q 'dynphony_expand_prologue' /tmp/gcc-16.2.0/gcc/config/moxie/moxie.cc
+          test -f /tmp/gcc-16.2.0/gcc/dynphony-protos.h
           echo 'Dynphony backend sources are installed over the bootstrap tuple.'
 
       - name: Configure C-only cross compiler

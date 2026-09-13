@@ -591,6 +591,69 @@ class BootstrapCompilerTests(unittest.TestCase):
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(), 42)
 
+    def test_pointer_cast_changes_arithmetic_stride(self):
+        source = b'''int main(void) {
+            unsigned int words[2];
+            unsigned char *bytes = (unsigned char *)words;
+            return (unsigned int)(bytes + 3) - (unsigned int)words;
+        }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 3)
+
+    def test_selfhost_runtime_memory_and_heap(self):
+        runtime = "\n".join(
+            line for line in Path("selfhost/src/runtime.c").read_text().splitlines()
+            if not line.startswith("#include")
+        )
+        source = (runtime + r'''
+        unsigned char __dyn_heap_anchor[7];
+        int main(void) {
+            unsigned char *a = malloc(16u);
+            unsigned char *b = malloc(16u);
+            unsigned char *c = malloc(16u);
+            unsigned char *joined;
+            unsigned char *zeroed;
+            unsigned char *grown;
+            unsigned int index = 0u;
+            if (!a || !b || !c) return 1;
+            while (index < 16u) { a[index] = (unsigned char)index; index += 1u; }
+            memcpy(b, a, 16u);
+            if (memcmp(a, b, 16u)) return 2;
+            memmove(b + 2u, b, 10u);
+            if (b[2] != 0u || b[11] != 9u) return 3;
+            memset(c, 0x5a, 16u);
+            if (c[0] != 0x5a || c[15] != 0x5a) return 4;
+            free(b);
+            free(a);
+            joined = malloc(40u);
+            if (joined != a) return 5;
+            free(joined);
+            free(c);
+            zeroed = calloc(8u, 1u);
+            if (!zeroed) return 6;
+            index = 0u;
+            while (index < 8u) {
+                if (zeroed[index]) return 7;
+                zeroed[index] = (unsigned char)(index + 1u);
+                index += 1u;
+            }
+            grown = realloc(zeroed, 24u);
+            if (!grown) return 8;
+            index = 0u;
+            while (index < 8u) {
+                if (grown[index] != (unsigned char)(index + 1u)) return 9;
+                index += 1u;
+            }
+            return 42;
+        }
+        ''').encode("ascii")
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(control.program_load_address + 24), 42)
+
     def test_sibling_blocks_may_reuse_local_names(self):
         source = b'''int main(void) {
             int total = 0;
@@ -809,7 +872,7 @@ class BootstrapCompilerTests(unittest.TestCase):
         )
         stage1.persistent[:] = persistent
         self.assertEqual(run_machine(
-            stage1, self.compiler.image.symbols["_halt"], 900_000_000
+            stage1, self.compiler.image.symbols["_halt"], 950_000_000
         ), 0)
         control1 = decode_control(stage1.persistent)
         self.assertEqual(control1.status, 0)

@@ -14,6 +14,7 @@ struct DynProjectReader {
 };
 
 static unsigned int dyn_output_length;
+static unsigned int dyn_error_position;
 
 static void dyn_copy_persistent(
     char *destination,
@@ -122,13 +123,17 @@ static unsigned int dyn_pack_word(
     unsigned int length
 ) {
     unsigned int word = 0;
-    unsigned int count = 0;
-    while (count < 4u) {
-        word <<= 8;
-        if (position + count < length)
-            word |= ((unsigned int)source[position + count]) & 255u;
-        count += 1u;
-    }
+    if (position < length)
+        word = ((unsigned int)source[position]) & 255u;
+    word <<= 8;
+    if (position + 1u < length)
+        word |= ((unsigned int)source[position + 1u]) & 255u;
+    word <<= 8;
+    if (position + 2u < length)
+        word |= ((unsigned int)source[position + 2u]) & 255u;
+    word <<= 8;
+    if (position + 3u < length)
+        word |= ((unsigned int)source[position + 3u]) & 255u;
     return word;
 }
 
@@ -138,7 +143,8 @@ static void dyn_write_failure(
 ) {
     dyn_output_length = 8u;
     if (output_capacity >= 4u) persistent_store(output_address, 0u);
-    if (output_capacity >= 8u) persistent_store(output_address + 4u, 0u);
+    if (output_capacity >= 8u)
+        persistent_store(output_address + 4u, dyn_error_position);
 }
 
 unsigned int dyn_last_output_length(void) {
@@ -163,6 +169,7 @@ int dyn_compile_buffer(
     int status = DYN_COMPILE_OK;
 
     *output_length = 0;
+    dyn_error_position = 0xffffffffu;
     if (length > 1048576u) return DYN_COMPILE_INPUT_TOO_LARGE;
     {
         struct DynLexer lexer;
@@ -250,6 +257,7 @@ int dyn_compile_buffer(
     program.dimension_capacity = dimension_capacity;
 
     if (!dyn_parse(source, length, &program)) {
+        dyn_error_position = program.error_position;
         status = DYN_COMPILE_PARSE_ERROR;
     } else if (!dyn_lower(&program, &module))
         status = DYN_COMPILE_SEMANTIC_ERROR;
@@ -305,6 +313,7 @@ int dyn_compile_project(
     int status;
 
     dyn_output_length = 0;
+    dyn_error_position = 0xffffffffu;
     reader.address = project_address;
     reader.length = project_byte_length;
     reader.position = 0;

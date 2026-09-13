@@ -354,6 +354,8 @@ static unsigned int dyn_pointer_element(const struct DynAstProgram *program,
         return program->dimensions[node->dimension_start].stride;
     if (node->kind == DYN_NODE_ADDRESS)
         return dyn_lvalue_size(program, node->left);
+    if (node->kind == DYN_NODE_CAST)
+        return node->dimension_count ? node->value : 0u;
     if (node->kind == DYN_NODE_ADD) {
         unsigned int left = dyn_pointer_element(program, node->left);
         return left ? left : dyn_pointer_element(program, node->right);
@@ -383,6 +385,10 @@ static void dyn_expression(struct DynEmitter *e,
         return;
     }
     if (node->kind == DYN_NODE_NUMBER) { dyn_constant(e, reg, node->value); return; }
+    if (node->kind == DYN_NODE_CAST) {
+        dyn_expression(e, program, node->left, reg);
+        return;
+    }
     if (node->kind == DYN_NODE_LOCAL) {
         if (node->value >= program->local_count) { e->error = 1; return; }
         dyn_local_address(e, node->value, 7u);

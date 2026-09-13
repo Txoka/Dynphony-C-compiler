@@ -67,9 +67,9 @@ python tools/bootstrap.py path/to/program.c -o build/program.bin
 The compiler reads translation units from DCP1 in persistent storage and writes
 the loader-compatible executable record back there. The
 format and status protocol are specified in
-[PROJECT-FORMAT.md](PROJECT-FORMAT.md). Multiple source records are currently
-merged in deterministic order, providing initial cross-file symbol resolution;
-preprocessing and isolated file scope are not implemented yet.
+[PROJECT-FORMAT.md](PROJECT-FORMAT.md). Multiple source records are
+preprocessed and merged in deterministic order, providing cross-file symbol
+resolution. General translation-unit-private file scope is not implemented yet.
 
 The dynamic-code path supports stack-backed scalar locals, assignments, all basic
 loop forms and loop control, runtime arithmetic/comparison/logical expressions,
@@ -87,7 +87,8 @@ Compound blocks also maintain lexical scope and support local shadowing.
 
 Scalar type spellings, pointer declarators, basic casts and `sizeof`, and all
 low-level Dynphony device intrinsics are also accepted. Pointer arithmetic is
-scaled by the pointed-to type. File-scope scalar and fixed-array objects,
+scaled by the pointed-to type, including after pointer casts. File-scope scalar
+and fixed-array objects,
 `static`/`extern`, brace array initializers, string literals, and static pointer
 relocations are emitted in an aligned data image after the code.
 File-scope enum definitions provide implicit and explicitly initialized integer
@@ -105,10 +106,14 @@ arrays compute their allocation size and multidimensional row strides at run
 time; `sizeof` preserves those runtime sizes, including through array
 parameters.
 
+The freestanding runtime provides `malloc`, `free`, `calloc`, `realloc`,
+`memcpy`, `memmove`, `memset`, and `memcmp`. Freed blocks are reused, adjacent
+free blocks are coalesced, and growing `realloc` preserves existing bytes.
+
 ## Next bootstrap stages
 
-The next useful increments are fuller aggregate semantics and exact block-scope
-VLA lifetime, then preprocessing and multiple-translation-unit linking.
-Once this C implementation accepts all constructs used by its own sources, its
-emitted compiler can compile the same sources again; a reproducible
-stage-2/stage-3 binary comparison will then establish self-hosting.
+The compiler is self-hosting: stage 1 emits stage 2, stage 2 emits stage 3, and
+the automated parity test requires stages 2 and 3 to be byte-identical. The next
+useful increments are translation-unit-private linkage, fuller aggregate and
+scalar conversion semantics, function pointers, and exact block-scope VLA
+lifetime.

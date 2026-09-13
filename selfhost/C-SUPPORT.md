@@ -61,8 +61,9 @@ The runtime-code path additionally supports:
 - Function-scope `static` scalar integer, pointer, and fixed-array objects with
   constant/brace, null, object-address, or string initialization; each
   declaration has independent data-image storage shared across calls.
-- Basic scalar cast syntax and `sizeof` for scalar type names and locals. Casts
-  do not yet emit narrowing/sign-extension conversions.
+- Basic scalar cast syntax and `sizeof` for scalar type names and locals.
+  Pointer casts retain their target pointee size for subsequent arithmetic;
+  scalar casts do not yet emit narrowing/sign-extension conversions.
 - Local reads and simple `=` assignment expressions.
 - Compound blocks, expression statements, `if`/`else`, `while`, `do`, `for`,
   `break`, `continue`, and `return`.
@@ -105,14 +106,18 @@ The runtime-code path additionally supports:
 - Runtime arithmetic (including software multiply/divide/remainder), shifts,
   bitwise operations, comparisons, logical operators, conditional expressions,
   and comma expressions.
+- Freestanding `malloc`, `free`, `calloc`, and `realloc` with aligned blocks,
+  free-list reuse, splitting, adjacent-block coalescing, overflow checks, and
+  data-preserving growth. `memcpy`, overlap-safe `memmove`, `memset`, and
+  `memcmp` are exposed by `<string.h>`.
 
 Compound statements introduce lexical scopes and inner locals may shadow outer
 locals. Deep expressions that exhaust scratch registers are rejected rather
 than spilled. VLA storage is currently reclaimed on function return rather
 than at the end of its declaring block. Unions, anonymous structures, aggregate
 assignment/arguments/returns, full scalar conversions, designated initializers,
-and multiple
-translation units remain unsupported.
+and translation-unit-private linkage remain unsupported. Multiple translation
+units are preprocessed, merged, and resolved in deterministic project order.
 
 ### Pipeline and generated code
 

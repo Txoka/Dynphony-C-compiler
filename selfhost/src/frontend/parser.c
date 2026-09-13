@@ -722,6 +722,7 @@ static unsigned int dyn_node_struct(
         return parser->program->members[node->value].struct_id;
     if (node->kind == DYN_NODE_ADDRESS)
         return dyn_node_struct(parser, node->left);
+    if (node->kind == DYN_NODE_CAST) return node->extra;
     return DYN_INVALID_NODE;
 }
 
@@ -742,6 +743,7 @@ static int dyn_node_pointer(
         return global->pointer || global->array;
     }
     if (node->kind == DYN_NODE_ADDRESS) return 1;
+    if (node->kind == DYN_NODE_CAST) return node->dimension_count != 0u;
     if (node->kind == DYN_NODE_SUBSCRIPT)
         return node->dimension_count != 0u;
     if (node->kind == DYN_NODE_MEMBER
@@ -928,14 +930,34 @@ static unsigned int dyn_unary(struct DynParser *parser) {
     if (token == DYN_TOK_LPAREN) {
         struct DynLexer saved;
         unsigned int size;
+        unsigned int element_size;
+        unsigned int structure;
+        unsigned int operand;
+        int pointer;
         dyn_restore_lexer(&saved, &parser->lexer);
         dyn_lexer_next(&parser->lexer);
         size = dyn_scalar_type(parser);
-        while (size && parser->lexer.current.kind == DYN_TOK_STAR)
+        element_size = parser->type_element_size;
+        structure = parser->type_struct;
+        pointer = parser->type_pointer;
+        while (size && parser->lexer.current.kind == DYN_TOK_STAR) {
+            element_size = size;
+            size = 4u;
+            pointer = 1;
             dyn_lexer_next(&parser->lexer);
+        }
         if (size && parser->lexer.current.kind == DYN_TOK_RPAREN) {
+            unsigned int node;
             dyn_lexer_next(&parser->lexer);
-            return dyn_unary(parser);
+            operand = dyn_unary(parser);
+            node = dyn_new_node(
+                parser, DYN_NODE_CAST, element_size, operand, DYN_INVALID_NODE
+            );
+            if (node != DYN_INVALID_NODE) {
+                parser->program->nodes[node].extra = structure;
+                parser->program->nodes[node].dimension_count = pointer;
+            }
+            return node;
         }
         dyn_restore_lexer(&parser->lexer, &saved);
     }
@@ -1241,7 +1263,8 @@ static unsigned int dyn_sequence(
 
 static int dyn_declaration_start(const struct DynParser *parser) {
     int kind = parser->lexer.current.kind;
-    return kind == DYN_TOK_INT || kind == DYN_TOK_UNSIGNED
+    return kind == DYN_TOK_INT || kind == DYN_TOK_VOID
+        || kind == DYN_TOK_UNSIGNED
         || kind == DYN_TOK_SIGNED || kind == DYN_TOK_CHAR_TYPE
         || kind == DYN_TOK_SHORT || kind == DYN_TOK_LONG
         || kind == DYN_TOK_CONST || kind == DYN_TOK_STRUCT

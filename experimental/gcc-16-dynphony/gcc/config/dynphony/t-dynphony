@@ -1,0 +1,4 @@
+# Dynphony GCC target make fragment.
+
+MULTILIB_OPTIONS =
+MULTILIB_DIRNAMES =

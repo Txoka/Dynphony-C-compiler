@@ -922,16 +922,25 @@ int dyn_emit_image(const struct DynIrModule *module, unsigned int load_address,
             && global->initializer_node != DYN_INVALID_NODE) {
             unsigned int node_index = global->initializer_node;
             const struct DynNode *node = &module->program->nodes[node_index];
+            unsigned int target = DYN_INVALID_NODE;
+            if (node->kind == DYN_NODE_NUMBER && node->value == 0u) {
+                index += 1u;
+                continue;
+            }
             if (node->kind == DYN_NODE_ADDRESS) {
                 node_index = node->left;
                 node = &module->program->nodes[node_index];
             }
-            if (node->kind != DYN_NODE_GLOBAL
-                || node->value >= module->program->global_count)
+            if (node->kind == DYN_NODE_GLOBAL) target = node->value;
+            else if (node->kind == DYN_NODE_LOCAL
+                && node->value < module->program->local_count
+                && module->program->locals[node->value].static_storage)
+                target = module->program->locals[node->value].static_global;
+            if (target >= module->program->global_count)
                 e.error = 1;
             else dyn_write_u32_at(
                 &e, e.global_offsets[index],
-                load_address + e.global_offsets[node->value]
+                load_address + e.global_offsets[target]
             );
         }
         index += 1u;

@@ -186,11 +186,16 @@ class BootstrapCompilerTests(unittest.TestCase):
     def test_function_scope_static_scalar_lifetime(self):
         source = b'''int next(void) {
             static int value = 10;
-            return ++value;
+            static int *pointer = &value;
+            static int *empty = 0;
+            if (empty) return 0;
+            *pointer += 1;
+            return *pointer;
         }
         int other(void) {
             static int value = 20;
-            return ++value;
+            static char *label = "A";
+            return ++value + label[0] - 'A';
         }
         int main(void) {
             int first = next();
@@ -205,6 +210,27 @@ class BootstrapCompilerTests(unittest.TestCase):
         status, _, binary, _ = run_stage0(
             self.compiler,
             b"int main(void){int x=1; static int bad=x; return bad;}",
+        )
+        self.assertEqual(status, 4)
+        self.assertEqual(binary, b"")
+
+    def test_function_scope_static_array_storage(self):
+        source = b'''int accumulate(void) {
+            static int values[3] = {10, 20};
+            values[2] += 1;
+            return values[0] + values[1] + values[2];
+        }
+        int main(void) {
+            return accumulate() + accumulate() - 21;
+        }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 42)
+
+        status, _, binary, _ = run_stage0(
+            self.compiler,
+            b"int main(void){int n=3; static int bad[n]; return 0;}",
         )
         self.assertEqual(status, 4)
         self.assertEqual(binary, b"")

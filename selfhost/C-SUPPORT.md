@@ -58,8 +58,9 @@ The runtime-code path additionally supports:
 - Stack-backed function-scope scalar locals declared as `int`, `unsigned int`,
   `signed int`, `char`, short/long integer spellings, or pointer-shaped scalar
   declarators, with optional `const` and initializers.
-- Function-scope `static` scalar integer objects with constant initialization;
-  each declaration has independent data-image storage shared across calls.
+- Function-scope `static` scalar integer, pointer, and fixed-array objects with
+  constant/brace, null, object-address, or string initialization; each
+  declaration has independent data-image storage shared across calls.
 - Basic scalar cast syntax and `sizeof` for scalar type names and locals. Casts
   do not yet emit narrowing/sign-extension conversions.
 - Local reads and simple `=` assignment expressions.

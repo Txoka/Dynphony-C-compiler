@@ -4,6 +4,8 @@ from pathlib import Path
 
 from dynphony.project import (
     CONTROL_SIZE,
+    CONTROL_MODE_ADDRESS,
+    MODE_RUN_AFTER_COMPILE,
     Project,
     ProjectFile,
     ProjectFormatError,
@@ -48,6 +50,19 @@ class ProjectFormatTests(unittest.TestCase):
             project,
         )
         self.assertEqual(control.output_capacity, 4096 - control.output_address)
+
+    def test_persistent_image_compile_then_run_mode(self):
+        project = Project((ProjectFile("main.c", b"int main(void){return 0;}"),))
+        image = make_persistent_image(
+            project, persistent_size=4096, program_load_address=2048,
+            run_after_compile=True,
+        )
+        self.assertEqual(
+            int.from_bytes(
+                image[CONTROL_MODE_ADDRESS:CONTROL_MODE_ADDRESS + 4], "big"
+            ),
+            MODE_RUN_AFTER_COMPILE,
+        )
 
     def test_rejects_malformed_project(self):
         with self.assertRaises(ProjectFormatError):

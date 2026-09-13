@@ -83,6 +83,7 @@ offset  field
 0x1c    output_capacity        available destination bytes
 0x20    status                 host initializes to 0xffffffff
 0x24    output_byte_length     compiler writes actual/required record size
+0x28    mode                   0 = compile only, 1 = compile then run
 ```
 
 The compiler validates alignment, bounds, and that the control block, project,
@@ -91,6 +92,11 @@ and output ranges do not overlap improperly. It changes `status` to
 data and `output_byte_length`. Writing status last makes completion observable
 without accepting a partially written result. If the output region is too
 small, `output_byte_length` reports the required size.
+
+With mode 1, a successful compiler copies the executable record into RAM at
+`program_load_address` and jumps to that image's `_start`. The address must not
+overlap the compiler image while it is copying. This transfer does not return;
+the generated program's return value and halt loop replace the compiler's.
 
 `program_load_address` participates in symbol layout and relocation exactly like
 the Python compiler's `--load-address`. A loader that places the image at 8192
@@ -137,6 +143,10 @@ running the record. `main` also returns it in `r1` for emulator convenience.
 6. The generated `_start` initializes the runtime and calls C `main`.
 7. Wait for the DCC1 status field to change from running, then check it and read
    the executable record from the persistent output region.
+
+For a one-shot compile-and-run boot, set mode 1 (the host packer option is
+`--run-after-compile`) and choose a non-overlapping program load address. A
+successful compilation then continues automatically into the generated image.
 
 Do **not** jump directly to `main` from a cold machine. That bypasses `_start`,
 including stack initialization, static relocation, and other runtime startup.

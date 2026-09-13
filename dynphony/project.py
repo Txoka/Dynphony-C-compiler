@@ -7,7 +7,10 @@ from pathlib import Path, PurePosixPath
 DCP_MAGIC = 0x44435031
 DCC_MAGIC = 0x44434331
 VERSION = 1
-CONTROL_SIZE = 40
+CONTROL_SIZE = 44
+CONTROL_MODE_ADDRESS = 40
+CONTROL_RESERVED_SIZE = CONTROL_SIZE
+MODE_RUN_AFTER_COMPILE = 1
 STATUS_PENDING = 0xFFFFFFFF
 STATUS_RUNNING = 0xFFFFFFFE
 
@@ -88,6 +91,7 @@ class Control:
     output_capacity: int
     status: int = STATUS_PENDING
     output_byte_length: int = 0
+    mode: int = 0
 
 
 def encode_project(project):
@@ -170,7 +174,7 @@ def encode_control(control):
         DCC_MAGIC, VERSION, control.persistent_size, control.project_address,
         control.project_byte_length, control.program_load_address,
         control.output_address, control.output_capacity, control.status,
-        control.output_byte_length,
+        control.output_byte_length, control.mode,
     )
     return b"".join(_u32(value) for value in values)
 
@@ -188,13 +192,13 @@ def decode_control(data):
 
 def make_persistent_image(
     project, *, persistent_size, program_load_address=8192,
-    project_address=64, output_address=None,
+    project_address=64, output_address=None, run_after_compile=False,
 ):
     if persistent_size < 4 or persistent_size & (persistent_size - 1):
         raise ProjectFormatError("persistent size must be a power of two")
     payload = encode_project(project)
     output_address = output_address or _align4(project_address + len(payload))
-    if project_address < CONTROL_SIZE or project_address & 3 or output_address & 3:
+    if project_address < CONTROL_RESERVED_SIZE or project_address & 3 or output_address & 3:
         raise ProjectFormatError("project and output addresses must be aligned")
     if project_address + len(payload) > output_address:
         raise ProjectFormatError("project overlaps output region")
@@ -203,6 +207,7 @@ def make_persistent_image(
     control = Control(
         persistent_size, project_address, len(payload), program_load_address,
         output_address, persistent_size - output_address,
+        mode=MODE_RUN_AFTER_COMPILE if run_after_compile else 0,
     )
     image = bytearray(persistent_size)
     image[:CONTROL_SIZE] = encode_control(control)
@@ -229,7 +234,8 @@ def project_from_directory(
 
 
 __all__ = [
-    "CONTROL_SIZE", "Control", "DCC_MAGIC", "DCP_MAGIC", "Project",
+    "CONTROL_SIZE", "CONTROL_MODE_ADDRESS", "CONTROL_RESERVED_SIZE",
+    "MODE_RUN_AFTER_COMPILE", "Control", "DCC_MAGIC", "DCP_MAGIC", "Project",
     "ProjectFile", "ProjectFormatError", "STATUS_PENDING", "STATUS_RUNNING",
     "VERSION", "decode_control", "decode_project", "encode_control",
     "encode_project", "make_persistent_image", "project_from_directory",

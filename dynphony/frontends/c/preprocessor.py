@@ -54,6 +54,7 @@ BUILTIN_HEADERS = {
         "unsigned int time_high(void); "
         "unsigned int persistent_load(unsigned int); "
         "void persistent_store(unsigned int,unsigned int); "
+        "void dynphony_exec(unsigned int); "
         "char *screen_framebuffer(void); "
         "void screen_cursor(unsigned int,unsigned int);\n"
     ),

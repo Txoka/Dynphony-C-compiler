@@ -10,6 +10,7 @@ unsigned int time_low(void);
 unsigned int time_high(void);
 unsigned int persistent_load(unsigned int address);
 void persistent_store(unsigned int address, unsigned int value);
+void dynphony_exec(unsigned int address);
 unsigned int dynphony_heap_remaining(void *pointer);
 
 #endif

@@ -17,6 +17,10 @@ def main(argv=None):
     parser.add_argument("-o", "--output", type=Path, required=True)
     parser.add_argument("--persistent-size", type=number, default=1 << 24)
     parser.add_argument("--load-address", type=number, default=8192)
+    parser.add_argument(
+        "--run-after-compile", action="store_true",
+        help="copy a successful output into RAM and jump to its entry point",
+    )
     parser.add_argument("-I", dest="include_roots", action="append")
     parser.add_argument("-D", dest="definitions", action="append", default=[])
     parser.add_argument(
@@ -32,6 +36,7 @@ def main(argv=None):
     image = make_persistent_image(
         project, persistent_size=args.persistent_size,
         program_load_address=args.load_address,
+        run_after_compile=args.run_after_compile,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(image)

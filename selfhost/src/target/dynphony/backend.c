@@ -445,6 +445,9 @@ static void dyn_expression(struct DynEmitter *e,
             dyn_alu(e, 0x22u, reg, reg, 7u);
             dyn_alu(e, 0x22u, reg + 1u, 14u, 7u);
             dyn_alu(e, 0x25u, reg, reg + 1u, reg);
+        } else if (node->value == 8u) {
+            dyn_expression(e, program, node->left, reg);
+            dyn_byte(e, 0x48u); dyn_byte(e, 0u); dyn_byte(e, reg);
         } else if (node->value == 4u || node->value == 6u) {
             dyn_expression(e, program, node->left, reg);
             dyn_push(e, reg);

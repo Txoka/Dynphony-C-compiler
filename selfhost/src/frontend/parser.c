@@ -494,6 +494,7 @@ static unsigned int dyn_primary(struct DynParser *parser) {
             || dyn_token_word(parser, "screen")
             || dyn_token_word(parser, "persistent_load")
             || dyn_token_word(parser, "persistent_store")
+            || dyn_token_word(parser, "dynphony_exec")
             || dyn_token_word(parser, "dynphony_heap_remaining"))) {
             unsigned int intrinsic = 0;
             unsigned int first_argument = DYN_INVALID_NODE;
@@ -505,7 +506,9 @@ static unsigned int dyn_primary(struct DynParser *parser) {
             else if (dyn_token_word(parser, "screen")) intrinsic = 4u;
             else if (dyn_token_word(parser, "persistent_load")) intrinsic = 5u;
             else if (dyn_token_word(parser, "persistent_store")) intrinsic = 6u;
-            else intrinsic = 7u;
+            else if (dyn_token_word(parser, "dynphony_heap_remaining"))
+                intrinsic = 7u;
+            else intrinsic = 8u;
             dyn_lexer_next(&parser->lexer);
             dyn_take(parser, DYN_TOK_LPAREN);
             if (intrinsic >= 4u) {

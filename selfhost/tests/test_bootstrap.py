@@ -28,6 +28,30 @@ class BootstrapCompilerTests(unittest.TestCase):
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(control.program_load_address + 12), 52)
 
+    @unittest.skipUnless(native_available(), "requires native emulator")
+    def test_compile_then_run_mode_transfers_to_generated_program(self):
+        persistent_size = 1 << 24
+        load_address = 0x80000
+        project = Project((ProjectFile(
+            "main.c", b"int main(void){output(77);return 42;}"
+        ),))
+        persistent = make_persistent_image(
+            project, persistent_size=persistent_size,
+            program_load_address=load_address, run_after_compile=True,
+        )
+        machine = Machine(
+            self.compiler.image.binary, persistent_size=persistent_size
+        )
+        machine.persistent[:] = persistent
+        result = run_machine(
+            machine, self.compiler.image.symbols["_halt"], 60_000_000
+        )
+        control = decode_control(machine.persistent)
+        self.assertEqual(control.status, 0)
+        self.assertEqual(machine.outputs, [77])
+        self.assertEqual(result, 42)
+        self.assertGreaterEqual(machine.pc, load_address)
+
     def test_precedence_literals_unary_and_comments(self):
         source = "int main(void){/* fold */ return ~0 & (0x20 + 010 * 2); }"
         status, compiler, binary, control = run_stage0(

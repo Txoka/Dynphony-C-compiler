@@ -64,6 +64,19 @@ To compile another source through the C compiler image:
 python tools/bootstrap.py path/to/program.c -o build/program.bin
 ```
 
+For hardware that cannot export modified persistent storage, pack a project in
+one-shot compile-and-run mode:
+
+```sh
+python tools/pack_project.py path/to/project -o build/project.pstore \
+    --persistent-size 0x1000000 --load-address 0x80000 \
+    --run-after-compile
+```
+
+Boot the compiler at RAM address 0 with that persistent image. After a
+successful build it copies the generated image to `0x80000` and jumps there;
+the selected address must not overlap the compiler image.
+
 The compiler reads translation units from DCP1 in persistent storage and writes
 the loader-compatible executable record back there. The
 format and status protocol are specified in

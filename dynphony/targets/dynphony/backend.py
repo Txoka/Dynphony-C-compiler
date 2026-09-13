@@ -199,6 +199,8 @@ class Backend:
                             argument_registers[0], argument_registers[1]
                         )
                     )
+                elif name == "dynphony_exec":
+                    a.emit(isa.jump("jmp", argument_registers[0]))
                 elif name == "__dyn_heap_remaining":
                     return False
                 else:
@@ -349,6 +351,9 @@ class Backend:
                 a.emit(isa.persistent_store(2, 1))
             else:
                 a.emit(isa.persistent_store(immediate, 1, True))
+        elif name == "dynphony_exec":
+            self.get(args[0], 1)
+            a.emit(isa.jump("jmp", 1))
         elif name == "__dyn_heap_remaining":
             self.get(args[0], 1)
             mask = self.target.ram_size - 1

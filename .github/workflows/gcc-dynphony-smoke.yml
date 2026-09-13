@@ -20,29 +20,28 @@ jobs:
           curl -L --retry 3 -o /tmp/gcc.tar.xz https://gcc.gnu.org/pub/gcc/releases/gcc-16.2.0/gcc-16.2.0.tar.xz
           tar -C /tmp -xf /tmp/gcc.tar.xz
 
-      - name: Inject Dynphony target
+      - name: Inject Dynphony target over bootstrap tuple
         run: |
-          cp -r experimental/gcc-16-dynphony/gcc/config/dynphony /tmp/gcc-16.2.0/gcc/config/
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('/tmp/gcc-16.2.0/gcc/config.gcc')
-          s = p.read_text()
-          needle = 'case ${target} in\n'
-          # Reuse config.sub's accepted moxie tuple only as a bootstrap alias,
-          # but select Dynphony as GCC's actual cpu_type.  This makes GCC pick
-          # dynphony.h/.md/.cc/.opt/t-dynphony rather than Moxie's backend.
-          stanza = '''case ${target} in\n  moxie-*-elf*)\n    cpu_type=dynphony\n    target_has_targetm_common=no\n    ;;\n'''
-          if needle not in s:
-              raise SystemExit('config.gcc case anchor not found')
-          s = s.replace(needle, stanza, 1)
-          p.write_text(s)
-          PY
+          # GCC's top-level config.sub does not know the new CPU name yet. For this
+          # bring-up only, keep the accepted moxie tuple but replace the backend
+          # files that config.gcc selects with the Dynphony implementation.
+          cp experimental/gcc-16-dynphony/gcc/config/dynphony/dynphony.md /tmp/gcc-16.2.0/gcc/config/moxie/moxie.md
+          cp experimental/gcc-16-dynphony/gcc/config/dynphony/dynphony.cc /tmp/gcc-16.2.0/gcc/config/moxie/moxie.cc
+          cp experimental/gcc-16-dynphony/gcc/config/dynphony/dynphony.h /tmp/gcc-16.2.0/gcc/config/moxie/moxie.h
+          cp experimental/gcc-16-dynphony/gcc/config/dynphony/dynphony-protos.h /tmp/gcc-16.2.0/gcc/config/moxie/moxie-protos.h
+          cp experimental/gcc-16-dynphony/gcc/config/dynphony/dynphony.opt /tmp/gcc-16.2.0/gcc/config/moxie/moxie.opt
 
       - name: Configure C-only cross compiler
         run: |
           mkdir /tmp/gcc-build
           cd /tmp/gcc-build
           /tmp/gcc-16.2.0/configure --target=moxie-unknown-elf --enable-languages=c --without-headers --disable-shared --disable-threads --disable-libssp --disable-libquadmath --disable-libatomic --disable-libstdcxx
+
+      - name: Verify selected backend
+        run: |
+          grep "md_file='moxie/moxie.md'" /tmp/gcc-build/gcc/config.log
+          grep -q 'Dynphony GCC machine description' /tmp/gcc-16.2.0/gcc/config/moxie/moxie.md
+          grep -q 'GCC Dynphony target' /tmp/gcc-16.2.0/gcc/config/moxie/moxie.h
 
       - name: Build GCC
         run: make -C /tmp/gcc-build -j2 all-gcc

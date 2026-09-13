@@ -207,6 +207,8 @@ struct DynConstant {
     unsigned int name_position;
     unsigned int name_length;
     unsigned int value;
+    unsigned int scope_depth;
+    int active;
 };
 
 struct DynTypeAlias {
@@ -216,6 +218,13 @@ struct DynTypeAlias {
     unsigned int element_size;
     unsigned int struct_id;
     int pointer;
+    unsigned int scope_depth;
+    int active;
+};
+
+struct DynEnumTag {
+    unsigned int name_position;
+    unsigned int name_length;
     unsigned int scope_depth;
     int active;
 };
@@ -272,6 +281,9 @@ struct DynAstProgram {
     struct DynTypeAlias *aliases;
     unsigned int alias_count;
     unsigned int alias_capacity;
+    struct DynEnumTag *enums;
+    unsigned int enum_count;
+    unsigned int enum_capacity;
     struct DynStruct *structs;
     unsigned int struct_count;
     unsigned int struct_capacity;

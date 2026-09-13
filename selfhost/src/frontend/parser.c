@@ -150,7 +150,7 @@ static unsigned int dyn_find_constant_from(
     if (!index) return DYN_INVALID_NODE;
     index -= 1u;
     constant = &parser->program->constants[index];
-    if (dyn_same_name(
+    if (constant->active && dyn_same_name(
         parser, constant->name_position, constant->name_length, position, length
     )) return index;
     return dyn_find_constant_from(parser, position, length, index);
@@ -189,6 +189,32 @@ static unsigned int dyn_find_alias(
 ) {
     return dyn_find_alias_from(
         parser, position, length, parser->program->alias_count
+    );
+}
+
+static unsigned int dyn_find_enum_from(
+    const struct DynParser *parser,
+    unsigned int position,
+    unsigned int length,
+    unsigned int index
+) {
+    const struct DynEnumTag *tag;
+    if (!index) return DYN_INVALID_NODE;
+    index -= 1u;
+    tag = &parser->program->enums[index];
+    if (tag->active && dyn_same_name(
+        parser, tag->name_position, tag->name_length, position, length
+    )) return index;
+    return dyn_find_enum_from(parser, position, length, index);
+}
+
+static unsigned int dyn_find_enum(
+    const struct DynParser *parser,
+    unsigned int position,
+    unsigned int length
+) {
+    return dyn_find_enum_from(
+        parser, position, length, parser->program->enum_count
     );
 }
 
@@ -606,6 +632,17 @@ static unsigned int dyn_scalar_type(struct DynParser *parser) {
         parser->type_element_size = size;
         dyn_lexer_next(&parser->lexer);
         return size;
+    }
+    if (parser->lexer.current.kind == DYN_TOK_ENUM) {
+        dyn_lexer_next(&parser->lexer);
+        if (parser->lexer.current.kind != DYN_TOK_IDENTIFIER
+            || dyn_find_enum(
+                parser, parser->lexer.current.position,
+                parser->lexer.current.length
+            ) == DYN_INVALID_NODE) return 0u;
+        dyn_lexer_next(&parser->lexer);
+        parser->type_element_size = 4u;
+        return 4u;
     }
     if (parser->lexer.current.kind == DYN_TOK_CHAR_TYPE) {
         dyn_lexer_next(&parser->lexer);
@@ -1206,6 +1243,7 @@ static int dyn_declaration_start(const struct DynParser *parser) {
         || kind == DYN_TOK_SIGNED || kind == DYN_TOK_CHAR_TYPE
         || kind == DYN_TOK_SHORT || kind == DYN_TOK_LONG
         || kind == DYN_TOK_CONST || kind == DYN_TOK_STRUCT
+        || kind == DYN_TOK_ENUM
         || (kind == DYN_TOK_IDENTIFIER && dyn_find_alias(
             parser, parser->lexer.current.position,
             parser->lexer.current.length
@@ -1414,6 +1452,9 @@ static unsigned int dyn_typedef_declaration(struct DynParser *parser) {
     return DYN_INVALID_NODE;
 }
 
+static void dyn_parse_enum(struct DynParser *parser);
+static int dyn_enum_definition_start(struct DynParser *parser);
+
 static unsigned int dyn_statement(struct DynParser *parser) {
     unsigned int node;
     if (parser->lexer.current.kind == DYN_TOK_LBRACE) {
@@ -1444,8 +1485,30 @@ static unsigned int dyn_statement(struct DynParser *parser) {
                 alias += 1u;
             }
         }
+        {
+            unsigned int tag = 0u;
+            while (tag < parser->program->enum_count) {
+                if (parser->program->enums[tag].scope_depth
+                    == parser->scope_depth)
+                    parser->program->enums[tag].active = 0;
+                tag += 1u;
+            }
+        }
+        {
+            unsigned int constant = 0u;
+            while (constant < parser->program->constant_count) {
+                if (parser->program->constants[constant].scope_depth
+                    == parser->scope_depth)
+                    parser->program->constants[constant].active = 0;
+                constant += 1u;
+            }
+        }
         parser->scope_depth -= 1u;
         return sequence;
+    }
+    if (dyn_enum_definition_start(parser)) {
+        dyn_parse_enum(parser);
+        return DYN_INVALID_NODE;
     }
     if (parser->lexer.current.kind == DYN_TOK_TYPEDEF)
         return dyn_typedef_declaration(parser);
@@ -1658,9 +1721,34 @@ static void dyn_parse_global(
 
 static void dyn_parse_enum(struct DynParser *parser) {
     unsigned int next_value = 0u;
+    unsigned int tag_position = DYN_INVALID_NODE;
+    unsigned int tag_length = 0u;
     dyn_take(parser, DYN_TOK_ENUM);
-    if (parser->lexer.current.kind == DYN_TOK_IDENTIFIER)
+    if (parser->lexer.current.kind == DYN_TOK_IDENTIFIER) {
+        tag_position = parser->lexer.current.position;
+        tag_length = parser->lexer.current.length;
         dyn_lexer_next(&parser->lexer);
+    }
+    if (tag_position != DYN_INVALID_NODE) {
+        struct DynEnumTag *tag;
+        unsigned int existing = dyn_find_enum(
+            parser, tag_position, tag_length
+        );
+        if ((existing != DYN_INVALID_NODE
+                && parser->program->enums[existing].scope_depth
+                    == parser->scope_depth)
+            || parser->program->enum_count
+                >= parser->program->enum_capacity) {
+            parser->error = 1;
+            return;
+        }
+        tag = &parser->program->enums[parser->program->enum_count];
+        parser->program->enum_count += 1u;
+        tag->name_position = tag_position;
+        tag->name_length = tag_length;
+        tag->scope_depth = parser->scope_depth;
+        tag->active = 1;
+    }
     if (!dyn_take(parser, DYN_TOK_LBRACE)) return;
     while (parser->lexer.current.kind != DYN_TOK_RBRACE && !parser->error) {
         struct DynConstant *constant;
@@ -1675,7 +1763,9 @@ static void dyn_parse_enum(struct DynParser *parser) {
         position = parser->lexer.current.position;
         length = parser->lexer.current.length;
         existing = dyn_find_constant(parser, position, length);
-        if (existing != DYN_INVALID_NODE
+        if ((existing != DYN_INVALID_NODE
+                && parser->program->constants[existing].scope_depth
+                    == parser->scope_depth)
             || parser->program->constant_count
                 >= parser->program->constant_capacity) {
             parser->error = 1;
@@ -1696,6 +1786,8 @@ static void dyn_parse_enum(struct DynParser *parser) {
         constant->name_position = position;
         constant->name_length = length;
         constant->value = value;
+        constant->scope_depth = parser->scope_depth;
+        constant->active = 1;
         next_value = value + 1u;
         if (parser->lexer.current.kind != DYN_TOK_COMMA) break;
         dyn_lexer_next(&parser->lexer);
@@ -1703,6 +1795,19 @@ static void dyn_parse_enum(struct DynParser *parser) {
     }
     dyn_take(parser, DYN_TOK_RBRACE);
     dyn_take(parser, DYN_TOK_SEMICOLON);
+}
+
+static int dyn_enum_definition_start(struct DynParser *parser) {
+    struct DynLexer saved;
+    int result = 0;
+    if (parser->lexer.current.kind != DYN_TOK_ENUM) return 0;
+    dyn_restore_lexer(&saved, &parser->lexer);
+    dyn_lexer_next(&parser->lexer);
+    if (parser->lexer.current.kind == DYN_TOK_IDENTIFIER)
+        dyn_lexer_next(&parser->lexer);
+    if (parser->lexer.current.kind == DYN_TOK_LBRACE) result = 1;
+    dyn_restore_lexer(&parser->lexer, &saved);
+    return result;
 }
 
 static int dyn_struct_definition_start(struct DynParser *parser) {
@@ -1930,6 +2035,7 @@ int dyn_parse(
     program->global_count = 0;
     program->constant_count = 0;
     program->alias_count = 0;
+    program->enum_count = 0;
     program->struct_count = 0;
     program->member_count = 0;
     program->dimension_count = 0;
@@ -1950,7 +2056,7 @@ int dyn_parse(
         int internal = 0;
         int type_alias = 0;
         struct DynFunction *function;
-        if (parser.lexer.current.kind == DYN_TOK_ENUM) {
+        if (dyn_enum_definition_start(&parser)) {
             dyn_parse_enum(&parser);
             continue;
         }

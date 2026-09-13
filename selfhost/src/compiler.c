@@ -209,7 +209,10 @@ int dyn_compile_buffer(
         return DYN_COMPILE_OUT_OF_MEMORY;
     }
     program.aliases = malloc(symbol_capacity * sizeof(struct DynTypeAlias));
-    if (!program.aliases) {
+    program.enums = malloc(symbol_capacity * sizeof(struct DynEnumTag));
+    if (!program.aliases || !program.enums) {
+        if (program.enums) free(program.enums);
+        if (program.aliases) free(program.aliases);
         free(program.constants);
         free(program.globals);
         free(program.functions);
@@ -226,6 +229,7 @@ int dyn_compile_buffer(
         if (program.dimensions) free(program.dimensions);
         if (program.members) free(program.members);
         if (program.structs) free(program.structs);
+        free(program.enums);
         free(program.aliases);
         free(program.constants);
         free(program.globals);
@@ -240,6 +244,7 @@ int dyn_compile_buffer(
     program.global_capacity = symbol_capacity;
     program.constant_capacity = symbol_capacity;
     program.alias_capacity = symbol_capacity;
+    program.enum_capacity = symbol_capacity;
     program.struct_capacity = symbol_capacity;
     program.member_capacity = symbol_capacity;
     program.dimension_capacity = dimension_capacity;
@@ -265,6 +270,7 @@ int dyn_compile_buffer(
     free(program.dimensions);
     free(program.members);
     free(program.structs);
+    free(program.enums);
     free(program.aliases);
     free(program.constants);
     free(program.globals);

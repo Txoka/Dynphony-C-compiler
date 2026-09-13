@@ -573,6 +573,34 @@ class BootstrapCompilerTests(unittest.TestCase):
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(), 48)
 
+    def test_enum_typed_globals_parameters_and_locals(self):
+        source = b'''enum Mode { MODE_A = 3, MODE_B = MODE_A + 6 };
+        enum Mode selected = MODE_B;
+        enum Mode choose(enum Mode mode) {
+            enum Mode local = mode;
+            return local;
+        }
+        int main(void) {
+            enum Mode outer = MODE_A;
+            {
+                enum Mode { MODE_A = 38 };
+                enum Mode inner = MODE_A;
+                outer += inner;
+            }
+            return outer + sizeof(enum Mode) + MODE_A - 6;
+        }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 42)
+
+        status, _, binary, _ = run_stage0(
+            self.compiler,
+            b"int main(void){enum Missing value; return 0;}",
+        )
+        self.assertEqual(status, 4)
+        self.assertEqual(binary, b"")
+
     def test_scalar_typedefs_in_globals_parameters_and_locals(self):
         source = b'''typedef unsigned int word;
         typedef char byte;

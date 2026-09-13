@@ -80,8 +80,9 @@ The runtime-code path additionally supports:
 - Static pointer initializers that refer to named objects or string literals.
 - Scaled pointer addition, subtraction, increment, and decrement; subtracting
   compatible pointers returns an element count.
-- File-scope enum definitions with optional tags, implicit values, constant
-  integer initializers, trailing commas, and use of enumerators in expressions.
+- File- and block-scope enum definitions with optional tags, implicit values,
+  constant integer initializers, trailing commas, typed objects/parameters,
+  casts and `sizeof`, and lexically scoped tags and enumerators.
 - File- and block-scope typedef declarations for scalar integer, structure, and
   pointer types. Block aliases obey lexical lifetime and may shadow outer aliases;
   their names are accepted as declaration specifiers.
@@ -106,8 +107,8 @@ Compound statements introduce lexical scopes and inner locals may shadow outer
 locals. Deep expressions that exhaust scratch registers are rejected rather
 than spilled. VLA storage is currently reclaimed on function return rather
 than at the end of its declaring block. Unions, anonymous structures, aggregate
-assignment/arguments/returns, enum-typed object declarations, full scalar
-conversions, designated initializers, and multiple
+assignment/arguments/returns, full scalar conversions, designated initializers,
+and multiple
 translation units remain unsupported.
 
 ### Pipeline and generated code

@@ -83,7 +83,7 @@ offset  field
 0x1c    output_capacity        available destination bytes
 0x20    status                 host initializes to 0xffffffff
 0x24    output_byte_length     compiler writes actual/required record size
-0x28    mode                   0 = compile only, 1 = compile then run
+0x28    mode                   bit 0 = run after compile; bit 1 = Symphony output
 ```
 
 The compiler validates alignment, bounds, and that the control block, project,
@@ -93,10 +93,13 @@ data and `output_byte_length`. Writing status last makes completion observable
 without accepting a partially written result. If the output region is too
 small, `output_byte_length` reports the required size.
 
-With mode 1, a successful compiler copies the executable record into RAM at
+With bit 0 set, a successful compiler copies the executable record into RAM at
 `program_load_address` and jumps to that image's `_start`. The address must not
 overlap the compiler image while it is copying. This transfer does not return;
 the generated program's return value and halt loop replace the compiler's.
+The compiler and generated program must target the same ISA when this bit is
+used. Bit 1 selects fixed-width Symphony output; when clear, output uses the
+variable-width Dynphony encoding.
 
 `program_load_address` participates in symbol layout and relocation exactly like
 the Python compiler's `--load-address`. A loader that places the image at 8192

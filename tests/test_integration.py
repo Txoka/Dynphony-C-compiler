@@ -5,14 +5,16 @@ raw binary in the reference Dynphony machine.  Unit-level feature tests remain
 in test_compiler.py; these tests protect the boundaries between compiler stages.
 """
 
+import os
 import unittest
 from pathlib import Path
 
-from dynphony import Target, compile_source as _compile_source, compile_sources
-from dynphony.emulator import Machine, native_available, native_run
+from dynphony import Target as _Target, compile_source as _compile_source, compile_sources as _compile_sources
+from dynphony.emulator import Machine as _Machine, native_available, native_run
 
 
 ROOT = Path(__file__).resolve().parents[1]
+TEST_ISA = os.environ.get("DYNPHONY_TEST_ISA", "dynphony")
 TEST_PREAMBLE = """#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,14 +22,34 @@ TEST_PREAMBLE = """#include <stdio.h>
 """
 
 
+def Target(*args, **kwargs):
+    kwargs.setdefault("isa", TEST_ISA)
+    return _Target(*args, **kwargs)
+
+
+def Machine(*args, **kwargs):
+    kwargs.setdefault("symphony", TEST_ISA == "symphony")
+    return _Machine(*args, **kwargs)
+
+
 def compile_source(source, filename="<input>", target=None):
-    return _compile_source(TEST_PREAMBLE + source, filename, target)
+    return _compile_source(TEST_PREAMBLE + source, filename, target or Target())
+
+
+def compile_sources(sources, target=None, **kwargs):
+    return _compile_sources(sources, target or Target(), **kwargs)
 
 
 def compile_and_run(source, expected, *, target=None, load_address=0, inputs=()):
     target = target or Target(load_address=load_address)
     result = compile_source(source, "integration.c", target)
-    machine = Machine(result.image.binary, target.ram_size, load_address, inputs=inputs)
+    machine = Machine(
+        result.image.binary,
+        target.ram_size,
+        load_address,
+        inputs=inputs,
+        symphony=target.isa == "symphony",
+    )
     halt = result.image.symbols["_halt"] + (load_address if target.pic else 0)
     actual = machine.run(halt)
     if actual != expected & 0xFFFFFFFF:
@@ -104,36 +126,63 @@ class CompilerIntegrationTests(unittest.TestCase):
             persistent_store(4, value ^ key);
             return persistent_load(4) ^ time_high();
         }"""
-        target = Target(ram_size=1 << 16, persistent_size=256, pic=True)
-        result = compile_source(source, "native-integration.c", target)
-        address = 0x1203
-        halt = address + result.image.symbols["_halt"]
-        options = {
-            "inputs": [38],
-            "keyboard_inputs": [9],
-            "time_value": 0x1234567800000000,
-            "persistent_size": 256,
-        }
-        reference = Machine(result.image.binary, target.ram_size, address, **options)
-        native = Machine(result.image.binary, target.ram_size, address, **options)
-        expected = reference.run(halt)
-        actual = native_run(native, halt)
-        self.assertEqual(actual, expected)
-        for attribute in (
-            "pc",
-            "steps",
-            "regs",
-            "comparison",
-            "outputs",
-            "screen_updates",
-            "memory",
-            "persistent",
-        ):
-            self.assertEqual(
-                getattr(native, attribute),
-                getattr(reference, attribute),
-                attribute,
-            )
+        for target_isa in ("dynphony", "symphony"):
+            with self.subTest(target=target_isa):
+                self.assertTrue(native_available(target_isa == "symphony"))
+                target = Target(
+                    ram_size=1 << 16,
+                    persistent_size=256,
+                    pic=True,
+                    isa=target_isa,
+                )
+                result = compile_source(source, "native-integration.c", target)
+                address = 0x1203
+                halt = address + result.image.symbols["_halt"]
+                options = {
+                    "inputs": [38],
+                    "keyboard_inputs": [9],
+                    "time_value": 0x1234567800000000,
+                    "persistent_size": 256,
+                    "symphony": target_isa == "symphony",
+                }
+                reference = Machine(
+                    result.image.binary, target.ram_size, address, **options
+                )
+                native = Machine(
+                    result.image.binary, target.ram_size, address, **options
+                )
+                expected = reference.run(halt)
+                actual = native_run(native, halt)
+                self.assertEqual(actual, expected)
+                for attribute in (
+                    "pc",
+                    "steps",
+                    "regs",
+                    "comparison",
+                    "outputs",
+                    "screen_updates",
+                    "memory",
+                    "persistent",
+                ):
+                    self.assertEqual(
+                        getattr(native, attribute),
+                        getattr(reference, attribute),
+                        attribute,
+                    )
+
+    def test_symphony_fixed_width_calls_globals_and_pic(self):
+        target = Target(ram_size=1 << 20, isa="symphony")
+        result, machine = compile_and_run(
+            MIXED_FEATURE_PROGRAM, 36, target=target
+        )
+        self.assertTrue(all(address % 4 == 0 for address in result.image.symbols.values()))
+        self.assertEqual(machine.regs[14], 0)
+        compile_and_run(
+            MIXED_FEATURE_PROGRAM,
+            36,
+            target=Target(ram_size=1 << 20, pic=True, isa="symphony"),
+            load_address=0x12345,
+        )
 
     def test_insertion_sort_demo(self):
         source = (ROOT / "examples/insertion_sort.c").read_text()

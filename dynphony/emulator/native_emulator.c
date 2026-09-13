@@ -4,6 +4,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef DYN_SYMPHONY
+#  define DYN_NEXT_PC(pc, size) ((pc) + 4u)
+#else
+#  define DYN_NEXT_PC(pc, size) ((pc) + (size))
+#endif
+
 #if defined(__GNUC__) || defined(__clang__)
 #  define DYN_LIKELY(x)   __builtin_expect(!!(x), 1)
 #  define DYN_UNLIKELY(x) __builtin_expect(!!(x), 0)
@@ -378,45 +384,49 @@ static int decode_instruction(State *s, uint32_t pc, Decoded *d) {
 
     if (op == 0x00) {
         d->uop = U_NOP;
-        d->next_pc = pc + 1u;
+        d->next_pc = DYN_NEXT_PC(pc, 1u);
+    } else if (op == 0x08) {
+        /* The run loop treats a stationary PC as a halted machine. */
+        d->uop = U_NOP;
+        d->next_pc = pc;
     } else if (op == 0x01) {
         d->uop = U_IN;
         d->a = mem8(m, mask, pc + 1u) >> 4;
-        d->next_pc = pc + 2u;
+        d->next_pc = DYN_NEXT_PC(pc, 2u);
     } else if (op == 0x02) {
         d->uop = U_OUT_R;
         d->a = mem8(m, mask, pc + 2u) & 15u;
-        d->next_pc = pc + 3u;
+        d->next_pc = DYN_NEXT_PC(pc, 3u);
     } else if (op == 0x12) {
         d->uop = U_OUT_I;
         d->imm = mem16be(m, mask, pc + 2u);
-        d->next_pc = pc + 4u;
+        d->next_pc = DYN_NEXT_PC(pc, 4u);
     } else if (op == 0x03) {
         d->uop = U_KEY;
         d->a = mem8(m, mask, pc + 1u) >> 4;
-        d->next_pc = pc + 2u;
+        d->next_pc = DYN_NEXT_PC(pc, 2u);
     } else if (op == 0x04) {
         d->uop = U_SCREEN_R;
         d->a = mem8(m, mask, pc + 1u) & 15u;
         d->c = mem8(m, mask, pc + 2u) & 15u;
-        d->next_pc = pc + 3u;
+        d->next_pc = DYN_NEXT_PC(pc, 3u);
     } else if (op == 0x14) {
         d->uop = U_SCREEN_I;
         d->a = mem8(m, mask, pc + 1u) & 15u;
         d->imm = mem16be(m, mask, pc + 2u);
-        d->next_pc = pc + 4u;
+        d->next_pc = DYN_NEXT_PC(pc, 4u);
     } else if (op == 0x05) {
         d->uop = U_TIME_LO;
         d->a = mem8(m, mask, pc + 1u) >> 4;
-        d->next_pc = pc + 2u;
+        d->next_pc = DYN_NEXT_PC(pc, 2u);
     } else if (op == 0x06) {
         d->uop = U_TIME_HI;
         d->a = mem8(m, mask, pc + 1u) >> 4;
-        d->next_pc = pc + 2u;
+        d->next_pc = DYN_NEXT_PC(pc, 2u);
     } else if (op == 0x07) {
         d->uop = U_GETPC;
         d->a = mem8(m, mask, pc + 1u) >> 4;
-        d->next_pc = pc + 2u;
+        d->next_pc = DYN_NEXT_PC(pc, 2u);
     } else if (op >= 0x20 && op <= 0x3a && (op & 15u) <= 10u) {
         x = mem8(m, mask, pc + 1u);
         d->a = x >> 4;       /* dst */
@@ -426,21 +436,21 @@ static int decode_instruction(State *s, uint32_t pc, Decoded *d) {
         if (immediate) {
             d->imm = mem16be(m, mask, pc + 2u);
             d->uop = (uint8_t)(U_NAND_RI + code);
-            d->next_pc = pc + 4u;
+            d->next_pc = DYN_NEXT_PC(pc, 4u);
         } else {
             d->c = mem8(m, mask, pc + 2u) & 15u;
             d->uop = (uint8_t)(U_NAND_RR + code);
-            d->next_pc = pc + 3u;
+            d->next_pc = DYN_NEXT_PC(pc, 3u);
         }
     } else if (op >= 0x40 && op <= 0x5f) {
         immediate = (op & 16u) != 0;
         base = op & 0xefu;
         if (immediate) {
             d->imm = mem16be(m, mask, pc + 2u);
-            d->next_pc = pc + 4u;
+            d->next_pc = DYN_NEXT_PC(pc, 4u);
         } else {
             d->c = mem8(m, mask, pc + 2u) & 15u;
-            d->next_pc = pc + 3u;
+            d->next_pc = DYN_NEXT_PC(pc, 3u);
         }
         switch (base) {
             case 0x41: d->uop = immediate ? U_JEQ_I  : U_JEQ_R;  break;
@@ -464,11 +474,11 @@ static int decode_instruction(State *s, uint32_t pc, Decoded *d) {
         if (immediate) {
             d->imm = mem16be(m, mask, pc + 2u);
             d->uop = (uint8_t)(U_LOAD8_I + code);
-            d->next_pc = pc + 4u;
+            d->next_pc = DYN_NEXT_PC(pc, 4u);
         } else {
             d->c = mem8(m, mask, pc + 2u) & 15u;
             d->uop = (uint8_t)(U_LOAD8_R + code);
-            d->next_pc = pc + 3u;
+            d->next_pc = DYN_NEXT_PC(pc, 3u);
         }
     }
 
@@ -743,12 +753,21 @@ static PyMethodDef methods[] = {
 
 static struct PyModuleDef module = {
     PyModuleDef_HEAD_INIT,
+#ifdef DYN_SYMPHONY
+    "_native_symphony",
+    "Optimized native Symphony emulator core.",
+#else
     "_native",
     "Optimized native Dynphony emulator core.",
+#endif
     -1,
     methods
 };
 
+#ifdef DYN_SYMPHONY
+PyMODINIT_FUNC PyInit__native_symphony(void) {
+#else
 PyMODINIT_FUNC PyInit__native(void) {
+#endif
     return PyModule_Create(&module);
 }

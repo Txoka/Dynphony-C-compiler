@@ -1,22 +1,37 @@
+import os
 import unittest
 from pathlib import Path
 
-from dynphony.emulator import Machine, native_available
+from dynphony import Target
+from dynphony.emulator import Machine as _Machine, native_available
 from dynphony.project import (
     Project,
     ProjectFile,
     decode_control,
-    make_persistent_image,
+    make_persistent_image as _make_persistent_image,
     project_from_directory,
 )
 
 from selfhost.tools.bootstrap import build_stage0, run_machine, run_stage0
 
 
+TEST_ISA = os.environ.get("DYNPHONY_TEST_ISA", "dynphony")
+
+
+def Machine(*args, **kwargs):
+    kwargs.setdefault("symphony", TEST_ISA == "symphony")
+    return _Machine(*args, **kwargs)
+
+
+def make_persistent_image(*args, **kwargs):
+    kwargs.setdefault("symphony", TEST_ISA == "symphony")
+    return _make_persistent_image(*args, **kwargs)
+
+
 class BootstrapCompilerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.compiler = build_stage0()
+        cls.compiler = build_stage0(Target(isa=TEST_ISA))
 
     def test_compiles_and_runs_example(self):
         source = Path("selfhost/examples/answer.c").read_text()
@@ -26,7 +41,7 @@ class BootstrapCompilerTests(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(len(binary), 16)
         program = Machine(binary, load_address=control.program_load_address)
-        self.assertEqual(program.run(control.program_load_address + 12), 52)
+        self.assertEqual(program.run(), 52)
 
     @unittest.skipUnless(native_available(), "requires native emulator")
     def test_compile_then_run_mode_transfers_to_generated_program(self):
@@ -59,7 +74,7 @@ class BootstrapCompilerTests(unittest.TestCase):
         )
         self.assertEqual(status, 0)
         program = Machine(binary, load_address=control.program_load_address)
-        self.assertEqual(program.run(control.program_load_address + 12), 48)
+        self.assertEqual(program.run(), 48)
 
     def test_reports_parse_and_semantic_errors(self):
         for source, expected in (
@@ -87,7 +102,7 @@ class BootstrapCompilerTests(unittest.TestCase):
         )
         self.assertEqual(status, 0)
         program = Machine(binary, load_address=control.program_load_address)
-        self.assertEqual(program.run(control.program_load_address + 12), 77)
+        self.assertEqual(program.run(), 77)
 
     def test_generated_image_honors_arbitrary_load_address(self):
         status, compiler, binary, control = run_stage0(
@@ -97,7 +112,7 @@ class BootstrapCompilerTests(unittest.TestCase):
         )
         self.assertEqual(status, 0)
         program = Machine(binary, load_address=control.program_load_address)
-        self.assertEqual(program.run(control.program_load_address + 24), 23)
+        self.assertEqual(program.run(), 23)
 
     def test_runtime_locals_assignment_control_flow_and_io(self):
         source = b"""int main(void) {
@@ -250,6 +265,21 @@ class BootstrapCompilerTests(unittest.TestCase):
         status, compiler, binary, control = run_stage0(self.compiler, source)
         self.assertEqual(status, 0)
         program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 42)
+
+    def test_compiles_symphony_fixed_width_image(self):
+        status, _, binary, control = run_stage0(
+            self.compiler,
+            b"int twice(int x){return x+x;} int main(void){return twice(21);}",
+            symphony=True,
+        )
+        self.assertEqual(status, 0)
+        self.assertEqual(len(binary) % 4, 0)
+        program = Machine(
+            binary,
+            load_address=control.program_load_address,
+            symphony=True,
+        )
         self.assertEqual(program.run(), 42)
 
     def test_bool_conversion_storage_returns_and_stack_parameters(self):
@@ -707,7 +737,7 @@ class BootstrapCompilerTests(unittest.TestCase):
         status, compiler, binary, control = run_stage0(self.compiler, source)
         self.assertEqual(status, 0)
         program = Machine(binary, load_address=control.program_load_address)
-        self.assertEqual(program.run(control.program_load_address + 24), 42)
+        self.assertEqual(program.run(), 42)
 
     def test_sibling_blocks_may_reuse_local_names(self):
         source = b'''int main(void) {
@@ -926,8 +956,9 @@ class BootstrapCompilerTests(unittest.TestCase):
             self.compiler.image.binary, persistent_size=persistent_size
         )
         stage1.persistent[:] = persistent
+        stage_limit = 2_000_000_000 if TEST_ISA == "symphony" else 1_200_000_000
         self.assertEqual(run_machine(
-            stage1, self.compiler.image.symbols["_halt"], 1_100_000_000
+            stage1, self.compiler.image.symbols["_halt"], stage_limit
         ), 0)
         control1 = decode_control(stage1.persistent)
         self.assertEqual(control1.status, 0)
@@ -941,7 +972,7 @@ class BootstrapCompilerTests(unittest.TestCase):
         )
         stage2.persistent[:] = persistent
         self.assertEqual(
-            run_machine(stage2, load_address + 24, 1_200_000_000), 0
+            run_machine(stage2, None, stage_limit), 0
         )
         control2 = decode_control(stage2.persistent)
         self.assertEqual(control2.status, 0)

@@ -6,6 +6,7 @@ from dynphony.project import (
     CONTROL_SIZE,
     CONTROL_MODE_ADDRESS,
     MODE_RUN_AFTER_COMPILE,
+    MODE_TARGET_SYMPHONY,
     Project,
     ProjectFile,
     ProjectFormatError,
@@ -62,6 +63,18 @@ class ProjectFormatTests(unittest.TestCase):
                 image[CONTROL_MODE_ADDRESS:CONTROL_MODE_ADDRESS + 4], "big"
             ),
             MODE_RUN_AFTER_COMPILE,
+        )
+
+        image = make_persistent_image(
+            project,
+            persistent_size=4096,
+            program_load_address=2048,
+            run_after_compile=True,
+            symphony=True,
+        )
+        self.assertEqual(
+            decode_control(image).mode,
+            MODE_RUN_AFTER_COMPILE | MODE_TARGET_SYMPHONY,
         )
 
     def test_rejects_malformed_project(self):

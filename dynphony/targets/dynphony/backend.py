@@ -868,7 +868,7 @@ class Backend:
                         + ("div" if i.extra == "/" else "mod")
                     )
                     a.address(7, helper)
-                    a.emit(isa.call(7))
+                    a.call_register(7)
                 else:
                     name = {
                         "+": "add",
@@ -904,7 +904,7 @@ class Backend:
                 if symbolic:
                     a.call(target.extra)
                 else:
-                    a.emit(isa.call(7))
+                    a.call_register(7)
                 self.discard_stack_arguments(stack_arguments)
                 self.normalize(1, i.type)
             elif op == "direct_call":
@@ -1025,9 +1025,9 @@ class Backend:
         for g in self.module.globals:
             if g.reserved and not self.target.include_framebuffer:
                 continue
-            a.emit(bytes(align_up(len(a.code), g.symbol.type.align) - len(a.code)))
+            a.emit_data(bytes(align_up(len(a.code), g.symbol.type.align) - len(a.code)))
             a.label(g.symbol.key)
-            a.emit(g.data or bytes(g.reserved))
+            a.emit_data(g.data or bytes(g.reserved))
         # Relax branches/calls before assigning addresses to reservations that
         # live immediately after the serialized image.
         a.relax_controls()

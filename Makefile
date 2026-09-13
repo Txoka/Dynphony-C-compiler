@@ -11,8 +11,10 @@ install:
 	$(PYTHON) -m pip install -e .
 
 test: native
-	$(PYTHON) -m unittest discover -s tests -v
-	$(PYTHON) -m unittest discover -s selfhost/tests -v
+	DYNPHONY_TEST_ISA=dynphony $(PYTHON) -m unittest discover -s tests -v
+	DYNPHONY_TEST_ISA=symphony $(PYTHON) -m unittest discover -s tests -v
+	DYNPHONY_TEST_ISA=dynphony $(PYTHON) -m unittest discover -s selfhost/tests -v
+	DYNPHONY_TEST_ISA=symphony $(PYTHON) -m unittest discover -s selfhost/tests -v
 
 selfhost: native
 	$(MAKE) -C selfhost stages

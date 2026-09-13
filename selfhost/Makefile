@@ -31,7 +31,8 @@ pack:
 		--exclude examples -o selfhost/$(BUILD_DIR)/selfhost.pstore
 
 test:
-	cd .. && $(PYTHON) -m unittest discover -s selfhost/tests -v
+	cd .. && DYNPHONY_TEST_ISA=dynphony $(PYTHON) -m unittest discover -s selfhost/tests -v
+	cd .. && DYNPHONY_TEST_ISA=symphony $(PYTHON) -m unittest discover -s selfhost/tests -v
 
 clean:
 	rm -rf $(BUILD_DIR)

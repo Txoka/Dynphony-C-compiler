@@ -30,6 +30,8 @@ def main(argv=None):
         help="define a preprocessor macro",
     )
     p.add_argument("--pic", action="store_true")
+    p.add_argument("--target", choices=("dynphony", "symphony"),
+                   default="dynphony")
     p.add_argument("--load-address", type=number, default=0)
     p.add_argument("--ram-size", type=number, default=16 * 1024 * 1024)
     p.add_argument("--persistent-size", type=number, default=0)
@@ -69,11 +71,12 @@ def main(argv=None):
     args = p.parse_args(argv)
     try:
         target = Target(
-            args.ram_size,
-            args.persistent_size,
-            args.load_address,
-            args.pic,
-            args.include_framebuffer,
+            ram_size=args.ram_size,
+            persistent_size=args.persistent_size,
+            load_address=args.load_address,
+            pic=args.pic,
+            include_framebuffer=args.include_framebuffer,
+            isa=args.target,
         )
         sources = [(str(path), path.read_text()) for path in args.source]
         result = compile_sources(
@@ -105,6 +108,7 @@ def main(argv=None):
                 args.ram_size,
                 address,
                 persistent_size=args.persistent_size,
+                symphony=args.target == "symphony",
             )
             if args.persistent_load:
                 persistent = args.persistent_load.read_bytes()
@@ -114,7 +118,8 @@ def main(argv=None):
                     )
                 m.persistent[:] = persistent
             halt = result.image.symbols["_halt"] + (address if args.pic else 0)
-            if args.engine == "native" and not native_available():
+            native_is_available = native_available(args.target == "symphony")
+            if args.engine == "native" and not native_is_available:
                 raise CompileError(
                     "native emulator is unavailable; run 'make native' or use "
                     "--engine python"
@@ -122,7 +127,7 @@ def main(argv=None):
             engine = (
                 "native"
                 if args.engine == "native"
-                or (args.engine == "auto" and native_available())
+                or (args.engine == "auto" and native_is_available)
                 else "python"
             )
             started = time.perf_counter()

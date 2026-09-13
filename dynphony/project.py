@@ -11,6 +11,7 @@ CONTROL_SIZE = 44
 CONTROL_MODE_ADDRESS = 40
 CONTROL_RESERVED_SIZE = CONTROL_SIZE
 MODE_RUN_AFTER_COMPILE = 1
+MODE_TARGET_SYMPHONY = 2
 STATUS_PENDING = 0xFFFFFFFF
 STATUS_RUNNING = 0xFFFFFFFE
 
@@ -193,6 +194,7 @@ def decode_control(data):
 def make_persistent_image(
     project, *, persistent_size, program_load_address=8192,
     project_address=64, output_address=None, run_after_compile=False,
+    symphony=False,
 ):
     if persistent_size < 4 or persistent_size & (persistent_size - 1):
         raise ProjectFormatError("persistent size must be a power of two")
@@ -207,7 +209,8 @@ def make_persistent_image(
     control = Control(
         persistent_size, project_address, len(payload), program_load_address,
         output_address, persistent_size - output_address,
-        mode=MODE_RUN_AFTER_COMPILE if run_after_compile else 0,
+        mode=(MODE_RUN_AFTER_COMPILE if run_after_compile else 0)
+        | (MODE_TARGET_SYMPHONY if symphony else 0),
     )
     image = bytearray(persistent_size)
     image[:CONTROL_SIZE] = encode_control(control)
@@ -235,7 +238,7 @@ def project_from_directory(
 
 __all__ = [
     "CONTROL_SIZE", "CONTROL_MODE_ADDRESS", "CONTROL_RESERVED_SIZE",
-    "MODE_RUN_AFTER_COMPILE", "Control", "DCC_MAGIC", "DCP_MAGIC", "Project",
+    "MODE_RUN_AFTER_COMPILE", "MODE_TARGET_SYMPHONY", "Control", "DCC_MAGIC", "DCP_MAGIC", "Project",
     "ProjectFile", "ProjectFormatError", "STATUS_PENDING", "STATUS_RUNNING",
     "VERSION", "decode_control", "decode_project", "encode_control",
     "encode_project", "make_persistent_image", "project_from_directory",

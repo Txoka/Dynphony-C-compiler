@@ -27,6 +27,7 @@ class Machine:
         keyboard_inputs=(),
         time_value=0,
         persistent_size=0,
+        symphony=False,
     ):
         Target(
             ram_size=ram_size,
@@ -48,6 +49,9 @@ class Machine:
         self.time_value = time_value & 0xFFFFFFFFFFFFFFFF
         self.persistent = bytearray(persistent_size)
         self.persistent_mask = persistent_size - 1 if persistent_size else None
+        self.symphony = symphony
+        if symphony:
+            self.step = self._step_symphony
         for i, b in enumerate(binary):
             self.memory[(load_address + i) & self.mask] = b
 
@@ -208,6 +212,27 @@ class Machine:
         r[0] = 0
         self.pc = next_pc & MASK
         self.steps += 1
+
+    def _step_symphony(self):
+        pc = self.pc
+        op = self.read(pc, 1)
+        if op == 8:
+            self.regs[0] = 0
+            self.steps += 1
+            return
+        Machine.step(self)
+        if op in (0,):
+            length = 1
+        elif op in (1, 3, 5, 6, 7):
+            length = 2
+        elif op in (0x12, 0x14):
+            length = 4
+        elif op in (2, 4) or 0x20 <= op <= 0x77:
+            length = 4 if op & 0x10 else 3
+        else:
+            return
+        if self.pc == (pc + length) & MASK:
+            self.pc = (pc + 4) & MASK
 
     def run(
         self,

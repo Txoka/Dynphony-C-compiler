@@ -47,7 +47,7 @@ int main(void) {
         || output_address > persistent_size
         || output_capacity > persistent_size - output_address
         || output_address < project_address + project_length
-        || mode > 1u
+        || mode > 3u
     ) {
         persistent_store(36u, 0u);
         persistent_store(32u, DYN_COMPILE_INVALID_CONTROL);
@@ -58,12 +58,13 @@ int main(void) {
         project_address,
         project_length,
         load_address,
+        mode >> 1u,
         output_address,
         output_capacity
     );
     persistent_store(36u, dyn_last_output_length());
     persistent_store(32u, status);
-    if (!status && mode == 1u)
+    if (!status && (mode & 1u) != 0u)
         dyn_run_compiled_program(output_address, load_address);
     return (int)status;
 }

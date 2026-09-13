@@ -17,6 +17,7 @@ int dyn_compile_buffer(
     const char *source,
     unsigned int length,
     unsigned int load_address,
+    unsigned int symphony,
     char *output,
     unsigned int output_capacity,
     unsigned int *output_length
@@ -25,6 +26,7 @@ int dyn_compile_project(
     unsigned int project_address,
     unsigned int project_byte_length,
     unsigned int program_load_address,
+    unsigned int symphony,
     unsigned int output_address,
     unsigned int output_capacity
 );

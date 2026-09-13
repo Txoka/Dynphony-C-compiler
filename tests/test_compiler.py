@@ -1,4 +1,5 @@
 import json
+import os
 import random
 import re
 import subprocess
@@ -9,17 +10,18 @@ from pathlib import Path
 
 from dynphony import (
     CompileError,
-    Target,
+    Target as _Target,
     compile_source as _compile_source,
-    compile_sources,
+    compile_sources as _compile_sources,
 )
-from dynphony.emulator import Machine, signed
+from dynphony.emulator import Machine as _Machine, signed
 from dynphony.frontend import parse, typecheck
 from dynphony.ir import lower
 from dynphony import isa
 from dynphony.targets.dynphony.abi import ABI
 
 ROOT = Path(__file__).resolve().parents[1]
+TEST_ISA = os.environ.get("DYNPHONY_TEST_ISA", "dynphony")
 TEST_PREAMBLE = """#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,9 +30,23 @@ TEST_PREAMBLE = """#include <stdbool.h>
 """
 
 
+def Target(*args, **kwargs):
+    kwargs.setdefault("isa", TEST_ISA)
+    return _Target(*args, **kwargs)
+
+
+def Machine(*args, **kwargs):
+    kwargs.setdefault("symphony", TEST_ISA == "symphony")
+    return _Machine(*args, **kwargs)
+
+
 def compile_source(source, filename="<input>", target=None):
     """Compile old focused snippets with their library dependencies declared."""
-    return _compile_source(TEST_PREAMBLE + source, filename, target)
+    return _compile_source(TEST_PREAMBLE + source, filename, target or Target())
+
+
+def compile_sources(sources, target=None, **kwargs):
+    return _compile_sources(sources, target or Target(), **kwargs)
 
 
 def run(
@@ -711,7 +727,7 @@ class DiagnosticTests(unittest.TestCase):
         ]
         for source, name in cases:
             with self.subTest(name=name), self.assertRaisesRegex(CompileError, name):
-                _compile_source(source)
+                _compile_source(source, target=Target())
 
         accepted = """#include <stdbool.h>
             #include <stdio.h>
@@ -722,7 +738,7 @@ class DiagnosticTests(unittest.TestCase):
                 bool ok=1; char *p=malloc(1); memset(p,0,1);
                 output(*p); printf("%d",ok); free(p); return input()+ok;
             }"""
-        result = _compile_source(accepted)
+        result = _compile_source(accepted, target=Target())
         machine = Machine(result.image.binary, inputs=[41])
         self.assertEqual(machine.run(result.image.symbols["_halt"]), 42)
 
@@ -827,7 +843,9 @@ class EncodingTests(unittest.TestCase):
         self.assertNotIn("global_addr () move_pile", result.ir.dump())
         self.assertNotIn("main", result.image.symbols)
         self.assertEqual(result.image.frames["_start"], 4)
-        self.assertLessEqual(len(result.image.binary), 260)
+        self.assertLessEqual(
+            len(result.image.binary), 320 if TEST_ISA == "symphony" else 260
+        )
         self.assertEqual(machine.steps, 272)
 
     def test_arena_allocator_example(self):
@@ -1103,6 +1121,14 @@ class EncodingTests(unittest.TestCase):
         for _ in range(3):
             m.step()
         self.assertEqual(m.regs[0], 0)
+
+        # Fixed-width execution skips non-semantic padding bytes.  Keeping the
+        # original bytes in memory also makes code inspection target-faithful.
+        fixed = bytes([0x01, 0x10, 0x08, 0x7F, 0x34, 0x11, 0, 1, 0x08, 0, 0, 0])
+        m = Machine(fixed, 256, inputs=[41], symphony=True)
+        self.assertEqual(m.run(), 42)
+        self.assertEqual(m.steps, 3)
+        self.assertEqual(m.read(2, 2), 0x087F)
 
     def test_cli(self):
         with tempfile.TemporaryDirectory() as d:

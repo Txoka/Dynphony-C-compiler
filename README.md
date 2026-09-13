@@ -57,6 +57,16 @@ python -m dynphony examples/pi.c -o pi.bin --run --hz-meter --engine native
 wheels with `make wheel`, an sdist with `make sdist`, or both with `make dist`.
 `make ci-wheels` invokes cibuildwheel for the current platform.
 
+Use `--target symphony` to emit and run Symphony's fixed four-byte instruction
+encoding. The native build contains separately compiled Dynphony and Symphony
+cores; target selection happens before execution and adds no ISA-mode branch to
+either instruction loop.
+
+```sh
+python -m dynphony examples/demo.c -o demo.symphony.bin \
+  --target symphony --run --engine auto
+```
+
 Tags matching `v*` trigger `.github/workflows/release.yml`. The workflow checks
 that the tag matches `pyproject.toml`, runs the test suite, builds and smoke-tests
 CPython 3.10–3.15 wheels for mainstream Linux x86_64/arm64, macOS Intel/Apple

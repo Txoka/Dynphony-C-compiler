@@ -29,28 +29,39 @@ STAGE0_SOURCES = (
 )
 
 
-def build_stage0():
+def build_stage0(target=None):
     sources = [
         (str(SELFHOST / name), (SELFHOST / name).read_text())
         for name in STAGE0_SOURCES
     ]
-    return compile_sources(sources, include_dirs=[str(SELFHOST / "include")])
+    return compile_sources(
+        sources, target=target, include_dirs=[str(SELFHOST / "include")]
+    )
 
 
 def run_machine(machine, halt, max_steps):
-    if native_available():
+    if native_available(machine.symphony):
         return native_run(machine, halt, max_steps=max_steps)
     return machine.run(halt, max_steps=max_steps)
 
 
-def run_stage0(compiler, source, load_address=8192, persistent_size=1 << 16):
+def run_stage0(
+    compiler, source, load_address=8192, persistent_size=1 << 16, symphony=None
+):
+    if symphony is None:
+        symphony = compiler.image.target.isa == "symphony"
     project = Project((ProjectFile("main.c", bytes(source)),))
     persistent = make_persistent_image(
         project,
         persistent_size=persistent_size,
         program_load_address=load_address,
+        symphony=symphony,
     )
-    machine = Machine(compiler.image.binary, persistent_size=persistent_size)
+    machine = Machine(
+        compiler.image.binary,
+        persistent_size=persistent_size,
+        symphony=compiler.image.target.isa == "symphony",
+    )
     machine.persistent[:] = persistent
     status = run_machine(machine, compiler.image.symbols["_halt"], 50_000_000)
     control = decode_control(machine.persistent)

@@ -155,6 +155,7 @@ int dyn_compile_buffer(
     const char *source,
     unsigned int length,
     unsigned int load_address,
+    unsigned int symphony,
     char *output,
     unsigned int output_capacity,
     unsigned int *output_length
@@ -264,7 +265,7 @@ int dyn_compile_buffer(
     else {
         dyn_optimize(&module);
         if (!dyn_emit_image(
-            &module, load_address, output, output_capacity, output_length
+            &module, load_address, symphony, output, output_capacity, output_length
         )) status = DYN_COMPILE_OUTPUT_TOO_SMALL;
     }
     {
@@ -292,6 +293,7 @@ int dyn_compile_project(
     unsigned int project_address,
     unsigned int project_byte_length,
     unsigned int program_load_address,
+    unsigned int symphony,
     unsigned int output_address,
     unsigned int output_capacity
 ) {
@@ -386,7 +388,7 @@ int dyn_compile_project(
         return DYN_COMPILE_OUT_OF_MEMORY;
     }
     status = dyn_compile_buffer(
-        source, source_length, program_load_address, image,
+        source, source_length, program_load_address, symphony, image,
         image_capacity, &image_length
     );
     record_length = 4u + ((image_length + 3u) & 0xfffffffcu);

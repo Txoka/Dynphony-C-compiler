@@ -12,6 +12,8 @@ struct DynEmitter {
     unsigned int capacity;
     unsigned int position;
     unsigned int load_address;
+    unsigned int symphony;
+    unsigned int pending_bytes;
     unsigned int *returns;
     unsigned int return_count;
     unsigned int return_capacity;
@@ -32,10 +34,30 @@ struct DynEmitter {
     int error;
 };
 
-static void dyn_byte(struct DynEmitter *e, unsigned int value) {
+static void dyn_raw_byte(struct DynEmitter *e, unsigned int value) {
     if (e->position >= e->capacity) { e->error = 1; return; }
     e->output[e->position] = (char)(value & 255u);
     e->position += 1u;
+}
+
+static unsigned int dyn_instruction_size(unsigned int opcode) {
+    if (opcode == 0u || opcode == 8u) return 1u;
+    if (opcode == 1u || opcode == 3u || (opcode >= 5u && opcode <= 7u))
+        return 2u;
+    if (opcode == 0x12u || opcode == 0x14u ||
+        ((opcode >= 0x20u && opcode <= 0x77u) && (opcode & 0x10u)))
+        return 4u;
+    return 3u;
+}
+
+static void dyn_byte(struct DynEmitter *e, unsigned int value) {
+    if (!e->symphony) { dyn_raw_byte(e, value); return; }
+    if (!e->pending_bytes) e->pending_bytes = dyn_instruction_size(value);
+    dyn_raw_byte(e, value);
+    e->pending_bytes -= 1u;
+    if (!e->pending_bytes && e->symphony) {
+        while (e->position & 3u) dyn_raw_byte(e, 0u);
+    }
 }
 
 static void dyn_u16(struct DynEmitter *e, unsigned int value) {
@@ -70,11 +92,14 @@ static void dyn_pop(struct DynEmitter *e, unsigned int reg) {
 static void dyn_constant_at(struct DynEmitter *e, unsigned int position,
                             unsigned int reg, unsigned int value) {
     unsigned int saved = e->position;
+    unsigned int saved_pending = e->pending_bytes;
     e->position = position;
+    e->pending_bytes = 0u;
     dyn_byte(e, 0x31u); dyn_byte(e, reg << 4); dyn_u16(e, value >> 16);
     dyn_byte(e, 0x37u); dyn_byte(e, (reg << 4) | reg); dyn_u16(e, 16u);
     dyn_byte(e, 0x31u); dyn_byte(e, (reg << 4) | reg); dyn_u16(e, value);
     e->position = saved;
+    e->pending_bytes = saved_pending;
 }
 
 static void dyn_write_u32_at(struct DynEmitter *e, unsigned int position,
@@ -168,7 +193,7 @@ static void dyn_call(struct DynEmitter *e, unsigned int function) {
     e->call_targets[e->call_count] = function;
     e->call_count += 1u;
     dyn_byte(e, 0x07u); dyn_byte(e, 0xf0u);
-    dyn_alu_immediate(e, 0x24u, 15u, 15u, 16u);
+    dyn_alu_immediate(e, 0x24u, 15u, 15u, e->symphony ? 20u : 16u);
     dyn_push(e, 15u);
     dyn_byte(e, 0x48u); dyn_byte(e, 0x0fu); dyn_byte(e, 7u);
 }
@@ -781,6 +806,7 @@ static void dyn_statement(struct DynEmitter *e,
 }
 
 int dyn_emit_image(const struct DynIrModule *module, unsigned int load_address,
+                   unsigned int symphony,
                    char *output, unsigned int capacity, unsigned int *length) {
     struct DynEmitter e;
     unsigned int index;
@@ -788,7 +814,8 @@ int dyn_emit_image(const struct DynIrModule *module, unsigned int load_address,
     unsigned int function_index;
     e.program = module->program;
     e.output = output; e.capacity = capacity; e.position = 0;
-    e.load_address = load_address; e.return_capacity = module->program->count + 1u;
+    e.load_address = load_address; e.symphony = symphony;
+    e.pending_bytes = 0u; e.return_capacity = module->program->count + 1u;
     e.returns = calloc(e.return_capacity, sizeof(unsigned int));
     e.breaks = calloc(e.return_capacity, sizeof(unsigned int));
     e.continues = calloc(e.return_capacity, sizeof(unsigned int));
@@ -914,7 +941,7 @@ int dyn_emit_image(const struct DynIrModule *module, unsigned int load_address,
             alignment = module->program->structs[global->struct_id].alignment;
         if (alignment > 4u) alignment = 4u;
         while (alignment > 1u && (e.position & (alignment - 1u)))
-            dyn_byte(&e, 0u);
+            dyn_raw_byte(&e, 0u);
         e.global_offsets[index] = e.position;
         bytes = global->array ? global->element_size * global->count : global->size;
         while (written < bytes) {
@@ -923,18 +950,18 @@ int dyn_emit_image(const struct DynIrModule *module, unsigned int load_address,
                 : global->array || (global->struct_id != DYN_INVALID_NODE
                     && !global->pointer) ? 0u : global->initial_value;
             if (global->data) {
-                dyn_byte(&e, value);
+                dyn_raw_byte(&e, value);
                 written += 1u;
                 continue;
             }
             if (global->array || (global->struct_id != DYN_INVALID_NODE
                 && !global->pointer)) {
-                dyn_byte(&e, 0u);
+                dyn_raw_byte(&e, 0u);
                 written += 1u;
                 continue;
             }
             unsigned int shift = 8u * (global->size - 1u - (written % global->size));
-            dyn_byte(&e, value >> shift);
+            dyn_raw_byte(&e, value >> shift);
             written += 1u;
         }
         index += 1u;

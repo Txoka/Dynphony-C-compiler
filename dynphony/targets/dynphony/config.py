@@ -12,6 +12,7 @@ class Target:
     load_address: int = 0
     pic: bool = False
     include_framebuffer: bool = False
+    isa: str = "dynphony"
 
     def validate(self):
         for name, size in (
@@ -26,6 +27,12 @@ class Target:
                 )
         if not 0 <= self.load_address < 2**32:
             raise CompileError("load address must fit 32 bits")
+        if self.isa not in ("dynphony", "symphony"):
+            raise CompileError("ISA must be 'dynphony' or 'symphony'")
+
+    @property
+    def fixed_instruction_width(self):
+        return 4 if self.isa == "symphony" else 0
 
 
 @dataclass

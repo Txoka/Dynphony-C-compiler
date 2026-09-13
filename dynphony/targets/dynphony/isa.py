@@ -132,14 +132,16 @@ def pop(r):
     )
 
 
-def call(target, immediate=False):
+def call(target, immediate=False, *, return_offset=None):
+    if return_offset is None:
+        return_offset = 17 if immediate else 16
     return (
         counter(Register.FLAGS)
         + alu(
             "add",
             Register.FLAGS,
             Register.FLAGS,
-            17 if immediate else 16,
+            return_offset,
             True,
         )
         + push(Register.FLAGS)

@@ -33,6 +33,10 @@ The project preprocessor supports quoted and include-root `#include`, object
 and function-like macros with up to eight parameters, macro redefinition,
 `#undef`, project definitions, include guards,
 `#pragma once`, recursive-include rejection, `#error`, and conditional groups.
+Object replacements and function arguments are recursively expanded with
+self-recursion suppression.
+Backslash-newline logical-line continuation is supported in directives and
+ordinary source lines.
 Conditional groups support `#if` and `#elif` integer expressions, including
 `defined`, unary, arithmetic, shift, comparison, bitwise, and logical operators.
 
@@ -108,6 +112,8 @@ translation units remain unsupported.
 ### Pipeline and generated code
 
 - The lexer and recursive-descent parser build an arena-backed expression AST.
+- A lexer prepass sizes AST, symbol, and dimension arenas from token/name counts
+  rather than raw source bytes, keeping self-compilation within 16 MiB RAM.
 - Semantic lowering retains the AST for unoptimized runtime code generation;
   a whole-program constant-return case is still evaluated during bootstrap.
 - `dyn_optimize` is intentionally a no-op.

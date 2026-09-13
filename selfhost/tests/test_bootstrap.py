@@ -369,6 +369,12 @@ class BootstrapCompilerTests(unittest.TestCase):
                 "main.c",
                 b'''#define ADD(left, right) ((left) + (right))
                 #define ZERO() 0
+                #define BASE FORTY
+                #define FORTY 40
+                #define OFFSET \
+                    2
+                #define WITH_OFFSET(value) ((value) + \
+                    OFFSET)
                 #define LEVEL 3
                 #if defined(LEVEL) && ((LEVEL * 10 + 12) == 42)
                 #define CONDITIONAL 42
@@ -380,8 +386,8 @@ class BootstrapCompilerTests(unittest.TestCase):
                 #include "value.h"
                 #include "value.h"
                 int main(void) {
-                    return ADD(selected(), 0) + ZERO()
-                        + CONDITIONAL - 42;
+                    return WITH_OFFSET(BASE) + ZERO()
+                        + selected() + CONDITIONAL - 84;
                 }''',
             ),
         ))

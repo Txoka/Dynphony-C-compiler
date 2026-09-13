@@ -9,6 +9,7 @@ struct DynMacro {
     struct DynProjectText parameters[DYN_PP_MAX_PARAMETERS];
     unsigned int parameter_count;
     int function_like;
+    int expanding;
 };
 
 struct DynPreprocessor {
@@ -89,9 +90,19 @@ struct DynCondition {
 };
 
 static void dyn_condition_skip(struct DynCondition *condition) {
-    while (condition->position < condition->length
-        && dyn_preprocessor_space(condition->text[condition->position]))
-        condition->position += 1u;
+    int again = 1;
+    while (again) {
+        again = 0;
+        while (condition->position < condition->length
+            && dyn_preprocessor_space(condition->text[condition->position]))
+            condition->position += 1u;
+        if (condition->position + 1u < condition->length
+            && condition->text[condition->position] == '\\'
+            && condition->text[condition->position + 1u] == '\n') {
+            condition->position += 2u;
+            again = 1;
+        }
+    }
 }
 
 static int dyn_condition_take(
@@ -370,6 +381,7 @@ static void dyn_define(
         preprocessor->macros[existing].replacement.length = replacement_length;
         preprocessor->macros[existing].parameter_count = 0u;
         preprocessor->macros[existing].function_like = 0;
+        preprocessor->macros[existing].expanding = 0;
         return;
     }
     if (preprocessor->macro_count >= preprocessor->macro_capacity) {
@@ -384,6 +396,7 @@ static void dyn_define(
         replacement_length;
     preprocessor->macros[preprocessor->macro_count].parameter_count = 0u;
     preprocessor->macros[preprocessor->macro_count].function_like = 0;
+    preprocessor->macros[preprocessor->macro_count].expanding = 0;
     preprocessor->macro_count += 1u;
 }
 
@@ -456,6 +469,7 @@ static void dyn_undef(
             preprocessor->macros[index + 1u].parameter_count;
         preprocessor->macros[index].function_like =
             preprocessor->macros[index + 1u].function_like;
+        preprocessor->macros[index].expanding = 0;
         {
             unsigned int parameter = 0u;
             while (parameter < DYN_PP_MAX_PARAMETERS) {
@@ -470,6 +484,19 @@ static void dyn_undef(
     }
     preprocessor->macro_count -= 1u;
 }
+
+static void dyn_append(
+    struct DynPreprocessor *preprocessor,
+    const char *text,
+    unsigned int length
+);
+
+static void dyn_expand_line(
+    struct DynPreprocessor *preprocessor,
+    const char *source,
+    unsigned int start,
+    unsigned int end
+);
 
 static void dyn_expand_function(
     struct DynPreprocessor *preprocessor,
@@ -517,7 +544,11 @@ static void dyn_expand_function(
         return;
     }
     while (replacement_position < macro->replacement.length) {
-        if (quoted) {
+        if (!quoted && replacement_position + 1u < macro->replacement.length
+            && macro->replacement.data[replacement_position] == '\\'
+            && macro->replacement.data[replacement_position + 1u] == '\n') {
+            replacement_position += 2u;
+        } else if (quoted) {
             char value = macro->replacement.data[replacement_position];
             dyn_append(
                 preprocessor, macro->replacement.data + replacement_position,
@@ -555,14 +586,30 @@ static void dyn_expand_function(
                 macro->parameters[parameter].length
             )) parameter += 1u;
             if (parameter < macro->parameter_count)
-                dyn_append(
-                    preprocessor, arguments[parameter].data,
+                dyn_expand_line(
+                    preprocessor, arguments[parameter].data, 0u,
                     arguments[parameter].length
                 );
-            else dyn_append(
-                preprocessor, macro->replacement.data + start,
-                replacement_position - start
-            );
+            else {
+                unsigned int nested = dyn_find_macro(
+                    preprocessor, macro->replacement.data + start,
+                    replacement_position - start
+                );
+                if (nested != 0xffffffffu
+                    && !preprocessor->macros[nested].function_like
+                    && !preprocessor->macros[nested].expanding) {
+                    preprocessor->macros[nested].expanding = 1;
+                    dyn_expand_line(
+                        preprocessor,
+                        preprocessor->macros[nested].replacement.data, 0u,
+                        preprocessor->macros[nested].replacement.length
+                    );
+                    preprocessor->macros[nested].expanding = 0;
+                } else dyn_append(
+                    preprocessor, macro->replacement.data + start,
+                    replacement_position - start
+                );
+            }
         } else {
             dyn_append(
                 preprocessor, macro->replacement.data + replacement_position,
@@ -599,7 +646,10 @@ static void dyn_expand_line(
     unsigned int position = start;
     char quoted = 0;
     while (position < end && !preprocessor->error) {
-        if (quoted) {
+        if (!quoted && position + 1u < end && source[position] == '\\'
+            && source[position + 1u] == '\n') {
+            position += 2u;
+        } else if (quoted) {
             char value = source[position];
             dyn_append(preprocessor, source + position, 1u);
             position += 1u;
@@ -621,23 +671,30 @@ static void dyn_expand_line(
             macro = dyn_find_macro(
                 preprocessor, source + name_start, position - name_start
             );
-            if (macro == 0xffffffffu)
+            if (macro == 0xffffffffu || preprocessor->macros[macro].expanding)
                 dyn_append(
                     preprocessor, source + name_start, position - name_start
                 );
             else if (preprocessor->macros[macro].function_like) {
                 unsigned int before = position;
+                preprocessor->macros[macro].expanding = 1;
                 dyn_expand_function(
                     preprocessor, &preprocessor->macros[macro], source,
                     &position, end
                 );
+                preprocessor->macros[macro].expanding = 0;
                 if (position == before) dyn_append(
                     preprocessor, source + name_start, position - name_start
                 );
-            } else dyn_append(
-                preprocessor, preprocessor->macros[macro].replacement.data,
-                preprocessor->macros[macro].replacement.length
-            );
+            } else {
+                preprocessor->macros[macro].expanding = 1;
+                dyn_expand_line(
+                    preprocessor,
+                    preprocessor->macros[macro].replacement.data, 0u,
+                    preprocessor->macros[macro].replacement.length
+                );
+                preprocessor->macros[macro].expanding = 0;
+            }
         } else {
             dyn_append(preprocessor, source + position, 1u);
             position += 1u;
@@ -749,8 +806,19 @@ static void dyn_process_file(
         unsigned int line_start = position;
         unsigned int line_end;
         unsigned int cursor;
-        while (position < source_length && source[position] != '\n')
-            position += 1u;
+        {
+            int continued = 1;
+            while (continued) {
+                continued = 0;
+                while (position < source_length && source[position] != '\n')
+                    position += 1u;
+                if (position < source_length && position > line_start
+                    && source[position - 1u] == '\\') {
+                    position += 1u;
+                    continued = 1;
+                }
+            }
+        }
         line_end = position;
         if (position < source_length) position += 1u;
         cursor = line_start;

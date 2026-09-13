@@ -157,12 +157,29 @@ int dyn_compile_buffer(
     struct DynIrModule module;
     unsigned int node_capacity;
     unsigned int symbol_capacity;
+    unsigned int dimension_capacity;
+    unsigned int token_count = 0u;
+    unsigned int name_count = 0u;
     int status = DYN_COMPILE_OK;
 
     *output_length = 0;
     if (length > 1048576u) return DYN_COMPILE_INPUT_TOO_LARGE;
-    node_capacity = length + 1u;
-    symbol_capacity = length / 8u + 64u;
+    {
+        struct DynLexer lexer;
+        dyn_lexer_init(&lexer, source, length);
+        while (lexer.current.kind != DYN_TOK_EOF
+            && lexer.current.kind != DYN_TOK_INVALID) {
+            if (lexer.current.kind == DYN_TOK_IDENTIFIER
+                || lexer.current.kind == DYN_TOK_MAIN
+                || lexer.current.kind == DYN_TOK_STRING) name_count += 1u;
+            token_count += 1u;
+            dyn_lexer_next(&lexer);
+        }
+    }
+    if (token_count > 0x7fffff00u) return DYN_COMPILE_INPUT_TOO_LARGE;
+    node_capacity = token_count * 2u + 64u;
+    symbol_capacity = name_count + 128u;
+    dimension_capacity = token_count / 4u + 64u;
     program.nodes = malloc(node_capacity * sizeof(struct DynNode));
     if (!program.nodes) return DYN_COMPILE_OUT_OF_MEMORY;
     program.locals = malloc(symbol_capacity * sizeof(struct DynLocal));
@@ -202,7 +219,9 @@ int dyn_compile_buffer(
     }
     program.structs = malloc(symbol_capacity * sizeof(struct DynStruct));
     program.members = malloc(symbol_capacity * sizeof(struct DynMember));
-    program.dimensions = malloc(symbol_capacity * sizeof(struct DynDimension));
+    program.dimensions = malloc(
+        dimension_capacity * sizeof(struct DynDimension)
+    );
     if (!program.structs || !program.members || !program.dimensions) {
         if (program.dimensions) free(program.dimensions);
         if (program.members) free(program.members);
@@ -223,7 +242,7 @@ int dyn_compile_buffer(
     program.alias_capacity = symbol_capacity;
     program.struct_capacity = symbol_capacity;
     program.member_capacity = symbol_capacity;
-    program.dimension_capacity = symbol_capacity;
+    program.dimension_capacity = dimension_capacity;
 
     if (!dyn_parse(source, length, &program)) {
         status = DYN_COMPILE_PARSE_ERROR;

@@ -46,19 +46,27 @@ Remaining work, in dependency and payoff order:
    local storage in the evaluator, then feed successful results back into the
    ordinary fixed point. Together with the completed global passes, this should collapse the
    constant demo to `mov r1, 146` plus halt.
-2. [ ] Identify natural loops, induction variables, and proven constant trip counts.
+2. [ ] Add general dead-storage and dead-allocation elimination. Remove unused
+   fixed local storage, VLA `stack_alloc` operations, and other allocation-like
+   setup when the object cannot be accessed or escape and the operation itself is
+   not observable. Preserve required initialization, bound evaluation, cleanup,
+   allocation-failure, overflow, and stack/heap-collision behavior; separate
+   side-effectful evaluation from removable storage setup where necessary. Add
+   regression tests for unused locals, arrays, VLAs, temporaries, side-effectful
+   bounds/initializers, and binary-layout changes.
+3. [ ] Identify natural loops, induction variables, and proven constant trip counts.
    Use these facts for loop-invariant code motion and bounded evaluation first;
    retain code-growing unrolling behind its explicit option.
-3. [ ] Recognize matching quotient/remainder expressions with identical proven-pure
+4. [ ] Recognize matching quotient/remainder expressions with identical proven-pure
    operands and lower them to a two-result `divmod` IR operation. Preserve signed
    C semantics and reject intervening mutation, volatile access, and calls.
-4. [ ] Add local value numbering, then global value numbering, using conservative
+5. [ ] Add local value numbering, then global value numbering, using conservative
    alias invalidation for loads. This removes repeated arithmetic and address work.
-5. [ ] Add block liveness and interference-based register/stack-slot reuse, followed
+6. [ ] Add block liveness and interference-based register/stack-slot reuse, followed
    by loop-depth spill costs and better caller-saved allocation.
-6. [ ] Add the small post-allocation peephole pass and iterate it with branch/call
+7. [ ] Add the small post-allocation peephole pass and iterate it with branch/call
    relaxation. It should only remove artifacts requiring physical-register knowledge.
-7. [ ] Add non-tail recursive fallthrough-call layout for a recursive function
+8. [ ] Add non-tail recursive fallthrough-call layout for a recursive function
    with exactly one external direct caller. Split the caller around that site,
    pre-push its known continuation, place the recursive function next, and let
    the first entry fall through while recursive entries keep calling the stable
@@ -72,12 +80,12 @@ Remaining work, in dependency and payoff order:
    arguments, nested non-tail recursion, caller continuation execution, `sp`
    restoration, stable recursive entry labels, branch-distance thresholds, and
    a deliberately unprofitable layout that must remain unchanged.
-8. [ ] Add flag liveness and profile/cost-guided block ordering after the preceding
+9. [ ] Add flag liveness and profile/cost-guided block ordering after the preceding
     CFG and register foundations are stable.
-9. [ ] Extend singleton function-pointer recognition through immutable global loads.
-   Local single-target pointers already reduce to direct calls after copy propagation.
-   Keep guarded multi-target devirtualization deferred because it can grow code.
-10. [x] Implement the memory runtime, heap allocation, overflow-safe VLA sizing,
+10. [ ] Extend singleton function-pointer recognition through immutable global loads.
+    Local single-target pointers already reduce to direct calls after copy propagation.
+    Keep guarded multi-target devirtualization deferred because it can grow code.
+11. [x] Implement the memory runtime, heap allocation, overflow-safe VLA sizing,
     and bidirectional heap/stack collision checks independently of optimizer correctness.
 
 ## Deferred and optional work

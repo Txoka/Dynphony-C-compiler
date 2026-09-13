@@ -1,0 +1,8 @@
+# Merge this case into GCC 16.x gcc/config.gcc.
+# The target is freestanding/bare-metal while Dynphony has no binutils/libc port.
+
+dynphony-*-elf*)
+    tm_file="${tm_file} elfos.h newlib-stdint.h dynphony/dynphony.h"
+    tmake_file="${tmake_file} dynphony/t-dynphony"
+    target_has_targetm_common=no
+    ;;

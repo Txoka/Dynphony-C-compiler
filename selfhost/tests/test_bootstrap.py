@@ -587,6 +587,38 @@ class BootstrapCompilerTests(unittest.TestCase):
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(), 42)
 
+    def test_block_scope_typedef_shadowing_and_lifetime(self):
+        source = b'''typedef int word;
+        int main(void) {
+            word outer = 40;
+            {
+                typedef unsigned char word;
+                const word inner = 255;
+                if (sizeof(word) != 1 || inner != 255) return 0;
+            }
+            {
+                typedef short word;
+                word delta = 2;
+                outer += delta;
+            }
+            return outer + sizeof(word) - 4;
+        }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 42)
+
+        status, _, binary, _ = run_stage0(
+            self.compiler,
+            b'''int main(void) {
+                typedef int duplicate;
+                typedef char duplicate;
+                return 0;
+            }''',
+        )
+        self.assertEqual(status, 4)
+        self.assertEqual(binary, b"")
+
     def test_struct_layout_members_pointers_and_nesting(self):
         source = b'''struct Pair;
         typedef struct Pair *PairPointer;

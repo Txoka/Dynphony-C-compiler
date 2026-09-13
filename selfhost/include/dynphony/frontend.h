@@ -216,6 +216,8 @@ struct DynTypeAlias {
     unsigned int element_size;
     unsigned int struct_id;
     int pointer;
+    unsigned int scope_depth;
+    int active;
 };
 
 struct DynStruct {

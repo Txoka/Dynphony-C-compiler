@@ -82,8 +82,9 @@ The runtime-code path additionally supports:
   compatible pointers returns an element count.
 - File-scope enum definitions with optional tags, implicit values, constant
   integer initializers, trailing commas, and use of enumerators in expressions.
-- File-scope typedef declarations for scalar integer types. Their names are
-  accepted as global, parameter, and local declaration specifiers.
+- File- and block-scope typedef declarations for scalar integer, structure, and
+  pointer types. Block aliases obey lexical lifetime and may shadow outer aliases;
+  their names are accepted as declaration specifiers.
 - Named structure definitions with naturally aligned scalar, pointer, fixed
   array, and previously defined structure members. Structure objects can use
   local or static/global storage. `.` and `->` produce member lvalues and may be
@@ -105,8 +106,8 @@ Compound statements introduce lexical scopes and inner locals may shadow outer
 locals. Deep expressions that exhaust scratch registers are rejected rather
 than spilled. VLA storage is currently reclaimed on function return rather
 than at the end of its declaring block. Unions, anonymous structures, aggregate
-assignment/arguments/returns, enum-typed object declarations, block-scope
-typedefs, full scalar conversions, designated initializers, and multiple
+assignment/arguments/returns, enum-typed object declarations, full scalar
+conversions, designated initializers, and multiple
 translation units remain unsupported.
 
 ### Pipeline and generated code

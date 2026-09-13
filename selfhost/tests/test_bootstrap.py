@@ -367,9 +367,13 @@ class BootstrapCompilerTests(unittest.TestCase):
             ),
             ProjectFile(
                 "main.c",
-                b'''#include "value.h"
+                b'''#define ADD(left, right) ((left) + (right))
+                #define ZERO() 0
                 #include "value.h"
-                int main(void) { return selected(); }''',
+                #include "value.h"
+                int main(void) {
+                    return ADD(selected(), 0) + ZERO();
+                }''',
             ),
         ))
         persistent = make_persistent_image(
@@ -392,6 +396,13 @@ class BootstrapCompilerTests(unittest.TestCase):
 
         status, _, binary, _ = run_stage0(
             self.compiler, b"#error deliberate failure\nint main(void){return 0;}"
+        )
+        self.assertEqual(status, 4)
+        self.assertEqual(binary, b"")
+
+        status, _, binary, _ = run_stage0(
+            self.compiler,
+            b"#define ONE(value) value\nint main(void){return ONE(1, 2);}",
         )
         self.assertEqual(status, 4)
         self.assertEqual(binary, b"")

@@ -59,6 +59,7 @@ enum DynTokenKind {
     DYN_TOK_UNSIGNED,
     DYN_TOK_SIGNED,
     DYN_TOK_CHAR_TYPE,
+    DYN_TOK_BOOL,
     DYN_TOK_SHORT,
     DYN_TOK_LONG,
     DYN_TOK_STRUCT,
@@ -154,6 +155,7 @@ struct DynNode {
     unsigned int dimension_start;
     unsigned int dimension_count;
     unsigned int stride_node;
+    int boolean;
 };
 
 struct DynLocal {
@@ -165,6 +167,7 @@ struct DynLocal {
     unsigned int offset;
     int array;
     int pointer;
+    int boolean;
     unsigned int struct_id;
     unsigned int dimension_start;
     unsigned int dimension_count;
@@ -185,6 +188,7 @@ struct DynFunction {
     unsigned int parameter_count;
     unsigned int frame_size;
     int defined;
+    int return_boolean;
 };
 
 struct DynGlobal {
@@ -197,6 +201,7 @@ struct DynGlobal {
     unsigned int initializer_node;
     int array;
     int pointer;
+    int boolean;
     unsigned int struct_id;
     unsigned int dimension_start;
     unsigned int dimension_count;
@@ -221,6 +226,7 @@ struct DynTypeAlias {
     unsigned int element_size;
     unsigned int struct_id;
     int pointer;
+    int boolean;
     unsigned int scope_depth;
     int active;
 };
@@ -253,6 +259,7 @@ struct DynMember {
     unsigned int dimension_count;
     int pointer;
     int array;
+    int boolean;
 };
 
 struct DynDimension {

@@ -228,6 +228,37 @@ class BootstrapCompilerTests(unittest.TestCase):
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(), 42)
 
+    def test_bool_conversion_storage_returns_and_stack_parameters(self):
+        source = b'''typedef _Bool bool;
+        bool global_flag = 9;
+        _Bool nonzero(unsigned int value) { return value; }
+        _Bool seventh(
+            int a, int b, int c, int d, int e, int f, _Bool value
+        ) { return value; }
+        unsigned char seventh_char(
+            int a, int b, int c, int d, int e, int f, unsigned char value
+        ) { return value; }
+        struct Item { _Bool flag; };
+        int main(void) {
+            bool flags[3];
+            struct Item item;
+            _Bool *pointer = &flags[0];
+            flags[0] = 0;
+            flags[1] = 9;
+            flags[2] = 0;
+            *pointer = 8;
+            flags[2] = nonzero(0);
+            item.flag = (_Bool)42;
+            return sizeof(_Bool) * 100 + global_flag * 10
+                + flags[0] * 5 + flags[1] * 3 + flags[2]
+                + item.flag + seventh(0, 0, 0, 0, 0, 0, 9)
+                + seventh_char(0, 0, 0, 0, 0, 0, 0x1234);
+        }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 172)
+
         status, _, binary, _ = run_stage0(
             self.compiler,
             b"int main(void){int n=3; static int bad[n]; return 0;}",
@@ -872,7 +903,7 @@ class BootstrapCompilerTests(unittest.TestCase):
         )
         stage1.persistent[:] = persistent
         self.assertEqual(run_machine(
-            stage1, self.compiler.image.symbols["_halt"], 950_000_000
+            stage1, self.compiler.image.symbols["_halt"], 1_100_000_000
         ), 0)
         control1 = decode_control(stage1.persistent)
         self.assertEqual(control1.status, 0)
@@ -886,7 +917,7 @@ class BootstrapCompilerTests(unittest.TestCase):
         )
         stage2.persistent[:] = persistent
         self.assertEqual(
-            run_machine(stage2, load_address + 24, 1_000_000_000), 0
+            run_machine(stage2, load_address + 24, 1_200_000_000), 0
         )
         control2 = decode_control(stage2.persistent)
         self.assertEqual(control2.status, 0)

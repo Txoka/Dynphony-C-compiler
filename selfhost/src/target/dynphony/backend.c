@@ -387,6 +387,10 @@ static void dyn_expression(struct DynEmitter *e,
     if (node->kind == DYN_NODE_NUMBER) { dyn_constant(e, reg, node->value); return; }
     if (node->kind == DYN_NODE_CAST) {
         dyn_expression(e, program, node->left, reg);
+        if (node->boolean) {
+            dyn_compare_zero(e, reg);
+            dyn_boolean(e, reg, 0x49u);
+        }
         return;
     }
     if (node->kind == DYN_NODE_LOCAL) {
@@ -848,12 +852,16 @@ int dyn_emit_image(const struct DynIrModule *module, unsigned int load_address,
                     dyn_constant(&e, 7u, offset);
                     dyn_alu(&e, 0x24u, 7u, 12u, 7u);
                 }
-                dyn_byte(&e, dyn_memory_operation(
-                    module->program->locals[
-                        function->local_base + index
-                    ].size, 0
-                ));
+                dyn_byte(&e, dyn_memory_operation(4u, 0));
                 dyn_byte(&e, source << 4); dyn_byte(&e, 7u);
+            }
+            if (module->program->locals[
+                function->local_base + index
+            ].boolean && !module->program->locals[
+                function->local_base + index
+            ].pointer) {
+                dyn_compare_zero(&e, source);
+                dyn_boolean(&e, source, 0x49u);
             }
             dyn_local_address(&e, function->local_base + index, 7u);
             dyn_byte(&e, dyn_memory_operation(

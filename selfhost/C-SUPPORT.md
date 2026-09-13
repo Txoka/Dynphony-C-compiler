@@ -58,12 +58,16 @@ The runtime-code path additionally supports:
 - Stack-backed function-scope scalar locals declared as `int`, `unsigned int`,
   `signed int`, `char`, short/long integer spellings, or pointer-shaped scalar
   declarators, with optional `const` and initializers.
+- `_Bool` and `<stdbool.h>` (`bool`, `true`, and `false`). Conversion from any
+  scalar value produces exactly zero or one for casts, initializers,
+  assignments, function returns, and register- or stack-passed parameters.
 - Function-scope `static` scalar integer, pointer, and fixed-array objects with
   constant/brace, null, object-address, or string initialization; each
   declaration has independent data-image storage shared across calls.
 - Basic scalar cast syntax and `sizeof` for scalar type names and locals.
   Pointer casts retain their target pointee size for subsequent arithmetic;
-  scalar casts do not yet emit narrowing/sign-extension conversions.
+  non-boolean scalar casts do not yet emit narrowing/sign-extension
+  conversions.
 - Local reads and simple `=` assignment expressions.
 - Compound blocks, expression statements, `if`/`else`, `while`, `do`, `for`,
   `break`, `continue`, and `return`.

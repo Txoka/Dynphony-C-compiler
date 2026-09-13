@@ -71,6 +71,7 @@ static int dyn_keyword(
     if (key == 0x9d375962u) return DYN_TOK_UNSIGNED;
     if (key == 0x1bc6ae5fu) return DYN_TOK_SIGNED;
     if (key == 0x7c952063u) return DYN_TOK_CHAR_TYPE;
+    if (key == 0x0edc2ff0u) return DYN_TOK_BOOL;
     if (key == 0x105af0d5u) return DYN_TOK_SHORT;
     if (key == 0x7c9a2f35u) return DYN_TOK_LONG;
     if (key == 0x1c93e1aau) return DYN_TOK_STRUCT;

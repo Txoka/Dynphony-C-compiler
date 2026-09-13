@@ -85,7 +85,8 @@ address-of, dereference, and scaled subscripting. This is the shared lvalue
 foundation for pointers, structures, VLAs, and heap-backed compiler arenas.
 Compound blocks also maintain lexical scope and support local shadowing.
 
-Scalar type spellings, pointer declarators, basic casts and `sizeof`, and all
+Scalar type spellings, `_Bool`/`<stdbool.h>`, pointer declarators, basic casts
+and `sizeof`, and all
 low-level Dynphony device intrinsics are also accepted. Pointer arithmetic is
 scaled by the pointed-to type, including after pointer casts. File-scope scalar
 and fixed-array objects,

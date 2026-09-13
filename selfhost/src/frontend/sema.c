@@ -29,6 +29,8 @@ static int dyn_evaluate_node(
     else if (node->kind == DYN_NODE_NEGATIVE) *result = 0u - left;
     else if (node->kind == DYN_NODE_NOT) *result = ~left;
     else if (node->kind == DYN_NODE_LOGICAL_NOT) *result = !left;
+    else if (node->kind == DYN_NODE_CAST)
+        *result = node->boolean ? left != 0u : left;
     else if (node->kind == DYN_NODE_LOGICAL_AND) {
         if (!left) {
             *result = 0;

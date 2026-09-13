@@ -30,7 +30,8 @@ function definitions, and file-scope object declarations may surround it.
 - Character constants and common single-character escapes.
 
 The project preprocessor supports quoted and include-root `#include`, object
-macros, project definitions, include guards, and conditional groups.
+macros and redefinition, `#undef`, project definitions, include guards,
+`#pragma once`, recursive-include rejection, `#error`, and conditional groups.
 
 ### Grammar and semantics
 

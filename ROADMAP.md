@@ -78,11 +78,11 @@ though the Dynphony computer has no filesystem.
 
 ## Phase 4 — prove self-hosting
 
-- [ ] Python compiler builds C stage 1.
-- [ ] Stage 1 reads the packed `selfhost/` project from persistent storage and
+- [x] Python compiler builds C stage 1.
+- [x] Stage 1 reads the packed `selfhost/` project from persistent storage and
   emits stage 2 there.
-- [ ] Stage 2 consumes the same project and emits stage 3.
-- [ ] Stage 2 and stage 3 are byte-identical.
+- [x] Stage 2 consumes the same project and emits stage 3.
+- [x] Stage 2 and stage 3 are byte-identical.
 - [ ] Run a representative conformance/demo suite with the self-hosted binary.
 - [ ] Record image size, persistent/RAM/heap/stack requirements, compile
   instruction count, and emulator throughput.

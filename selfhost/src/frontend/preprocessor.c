@@ -16,6 +16,8 @@ struct DynPreprocessor {
     struct DynMacro *macros;
     unsigned int macro_count;
     unsigned int macro_capacity;
+    char *once_files;
+    char *active_files;
     char *output;
     unsigned int length;
     unsigned int capacity;
@@ -79,7 +81,14 @@ static void dyn_define(
     const char *name, unsigned int length,
     const char *replacement, unsigned int replacement_length
 ) {
-    if (!length || dyn_macro_defined(preprocessor, name, length)) return;
+    unsigned int existing;
+    if (!length) return;
+    existing = dyn_find_macro(preprocessor, name, length);
+    if (existing != 0xffffffffu) {
+        preprocessor->macros[existing].replacement.data = (char *)replacement;
+        preprocessor->macros[existing].replacement.length = replacement_length;
+        return;
+    }
     if (preprocessor->macro_count >= preprocessor->macro_capacity) {
         preprocessor->error = 1;
         return;
@@ -91,6 +100,27 @@ static void dyn_define(
     preprocessor->macros[preprocessor->macro_count].replacement.length =
         replacement_length;
     preprocessor->macro_count += 1u;
+}
+
+static void dyn_undef(
+    struct DynPreprocessor *preprocessor,
+    const char *name,
+    unsigned int length
+) {
+    unsigned int index = dyn_find_macro(preprocessor, name, length);
+    if (index == 0xffffffffu) return;
+    while (index + 1u < preprocessor->macro_count) {
+        preprocessor->macros[index].name.data =
+            preprocessor->macros[index + 1u].name.data;
+        preprocessor->macros[index].name.length =
+            preprocessor->macros[index + 1u].name.length;
+        preprocessor->macros[index].replacement.data =
+            preprocessor->macros[index + 1u].replacement.data;
+        preprocessor->macros[index].replacement.length =
+            preprocessor->macros[index + 1u].replacement.length;
+        index += 1u;
+    }
+    preprocessor->macro_count -= 1u;
 }
 
 static void dyn_append(
@@ -246,6 +276,12 @@ static void dyn_process_file(
         preprocessor->error = 1;
         return;
     }
+    if (preprocessor->once_files[file]) return;
+    if (preprocessor->active_files[file]) {
+        preprocessor->error = 1;
+        return;
+    }
+    preprocessor->active_files[file] = 1;
     source = preprocessor->files[file].contents.data;
     source_length = preprocessor->files[file].contents.length;
     while (position < source_length && !preprocessor->error) {
@@ -323,6 +359,24 @@ static void dyn_process_file(
                     source + replacement_start, line_end - replacement_start
                 );
             } else if (active && dyn_word(
+                source + directive_start, directive_length, "undef", 5u
+            )) {
+                dyn_undef(
+                    preprocessor, source + argument_start,
+                    line_end - argument_start
+                );
+            } else if (active && dyn_word(
+                source + directive_start, directive_length, "pragma", 6u
+            )) {
+                if (dyn_word(
+                    source + argument_start, line_end - argument_start,
+                    "once", 4u
+                )) preprocessor->once_files[file] = 1;
+                else preprocessor->error = 1;
+            } else if (active && dyn_word(
+                source + directive_start, directive_length, "error", 5u
+            )) preprocessor->error = 1;
+            else if (active && dyn_word(
                 source + directive_start, directive_length, "include", 7u
             )) {
                 char opening;
@@ -362,6 +416,7 @@ static void dyn_process_file(
         }
     }
     if (conditional_depth) preprocessor->error = 1;
+    preprocessor->active_files[file] = 0;
 }
 
 int dyn_preprocess_project(
@@ -392,11 +447,15 @@ int dyn_preprocess_project(
     preprocessor.macros = malloc(
         preprocessor.macro_capacity * sizeof(struct DynMacro)
     );
+    preprocessor.once_files = calloc(file_count, 1u);
+    preprocessor.active_files = calloc(file_count, 1u);
     preprocessor.macro_count = 0u;
     preprocessor.output = malloc(capacity + 1u);
     preprocessor.length = 0u;
     preprocessor.capacity = capacity;
-    preprocessor.error = !preprocessor.macros || !preprocessor.output;
+    preprocessor.error = !preprocessor.macros || !preprocessor.output
+        || (file_count && (!preprocessor.once_files
+            || !preprocessor.active_files));
     index = 0;
     while (index < definition_count && !preprocessor.error) {
         unsigned int length = 0;
@@ -423,10 +482,14 @@ int dyn_preprocess_project(
     }
     if (preprocessor.error) {
         if (preprocessor.output) free(preprocessor.output);
+        if (preprocessor.once_files) free(preprocessor.once_files);
+        if (preprocessor.active_files) free(preprocessor.active_files);
         free(preprocessor.macros);
         return 0;
     }
     preprocessor.output[preprocessor.length] = 0;
+    free(preprocessor.once_files);
+    free(preprocessor.active_files);
     free(preprocessor.macros);
     *output = preprocessor.output;
     *output_length = preprocessor.length;

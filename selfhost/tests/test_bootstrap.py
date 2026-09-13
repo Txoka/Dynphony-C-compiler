@@ -354,6 +354,66 @@ class BootstrapCompilerTests(unittest.TestCase):
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(), 42)
 
+    def test_preprocessor_once_undef_redefinition_and_error(self):
+        project = Project((
+            ProjectFile(
+                "value.h",
+                b'''#pragma once
+                #define VALUE 1
+                #undef VALUE
+                #define VALUE 42
+                int selected(void) { return VALUE; }''',
+                2,
+            ),
+            ProjectFile(
+                "main.c",
+                b'''#include "value.h"
+                #include "value.h"
+                int main(void) { return selected(); }''',
+            ),
+        ))
+        persistent = make_persistent_image(
+            project, persistent_size=1 << 16, program_load_address=8192
+        )
+        machine = Machine(self.compiler.image.binary, persistent_size=1 << 16)
+        machine.persistent[:] = persistent
+        self.assertEqual(run_machine(
+            machine, self.compiler.image.symbols["_halt"], 50_000_000
+        ), 0)
+        control = decode_control(machine.persistent)
+        self.assertEqual(control.status, 0)
+        record = machine.persistent[control.output_address:]
+        image_length = int.from_bytes(record[:4], "big")
+        program = Machine(
+            bytes(record[4:4 + image_length]),
+            load_address=control.program_load_address,
+        )
+        self.assertEqual(program.run(), 42)
+
+        status, _, binary, _ = run_stage0(
+            self.compiler, b"#error deliberate failure\nint main(void){return 0;}"
+        )
+        self.assertEqual(status, 4)
+        self.assertEqual(binary, b"")
+
+    def test_preprocessor_rejects_recursive_include(self):
+        project = Project((
+            ProjectFile("loop.h", b'#include "loop.h"', 2),
+            ProjectFile(
+                "main.c",
+                b'#include "loop.h"\nint main(void){return 0;}',
+            ),
+        ))
+        persistent = make_persistent_image(
+            project, persistent_size=1 << 16, program_load_address=8192
+        )
+        machine = Machine(self.compiler.image.binary, persistent_size=1 << 16)
+        machine.persistent[:] = persistent
+        self.assertEqual(run_machine(
+            machine, self.compiler.image.symbols["_halt"], 50_000_000
+        ), 4)
+        self.assertEqual(decode_control(machine.persistent).status, 4)
+
     def test_fixed_arrays_address_dereference_and_subscript(self):
         source = b"""int main(void) {
             int values[5];

@@ -320,6 +320,8 @@ static unsigned int dyn_add_local(
     local->vla = 0;
     local->scope_depth = parser->scope_depth;
     local->active = 1;
+    local->static_storage = 0;
+    local->static_global = DYN_INVALID_NODE;
     if (parser->type_struct != DYN_INVALID_NODE && !pointer)
         parser->frame_size += (size + 3u) & 0xfffffffcu;
     else parser->frame_size += 4u;
@@ -1321,7 +1323,10 @@ static int dyn_parse_dimensions(
     return dyn_finish_dimensions(parser, result, result->count);
 }
 
-static unsigned int dyn_declaration(struct DynParser *parser) {
+static unsigned int dyn_declaration(
+    struct DynParser *parser,
+    int static_storage
+) {
     unsigned int local;
     unsigned int initializer;
     unsigned int size = dyn_scalar_type(parser);
@@ -1346,6 +1351,51 @@ static unsigned int dyn_declaration(struct DynParser *parser) {
         parser->program->locals[local].struct_id = structure;
     }
     dyn_lexer_next(&parser->lexer);
+    if (static_storage) {
+        struct DynGlobal *global;
+        unsigned int value = 0u;
+        unsigned int initializer_node = DYN_INVALID_NODE;
+        if (structure != DYN_INVALID_NODE || pointer
+            || parser->lexer.current.kind == DYN_TOK_LBRACKET
+            || local == DYN_INVALID_NODE
+            || parser->program->global_count
+                >= parser->program->global_capacity) {
+            parser->error = 1;
+            return DYN_INVALID_NODE;
+        }
+        parser->frame_size -= 4u;
+        if (parser->lexer.current.kind == DYN_TOK_ASSIGN) {
+            dyn_lexer_next(&parser->lexer);
+            initializer_node = dyn_assignment(parser);
+            if (!dyn_evaluate(parser->program, initializer_node, &value)) {
+                parser->error = 1;
+                return DYN_INVALID_NODE;
+            }
+        }
+        dyn_take(parser, DYN_TOK_SEMICOLON);
+        global = &parser->program->globals[parser->program->global_count];
+        parser->program->locals[local].static_storage = 1;
+        parser->program->locals[local].static_global =
+            parser->program->global_count;
+        parser->program->global_count += 1u;
+        global->name_position = parser->program->locals[local].position;
+        global->name_length = parser->program->locals[local].length;
+        global->size = size;
+        global->element_size = element_size;
+        global->count = 1u;
+        global->initial_value = value;
+        global->initializer_node = initializer_node;
+        global->array = 0;
+        global->pointer = 0;
+        global->struct_id = DYN_INVALID_NODE;
+        global->dimension_start = 0u;
+        global->dimension_count = 0u;
+        global->defined = 1;
+        global->internal = 1;
+        global->data = 0;
+        global->data_length = 0u;
+        return DYN_INVALID_NODE;
+    }
     if (parser->lexer.current.kind == DYN_TOK_LBRACKET) {
         struct DynParsedDimensions dimensions;
         unsigned int previous_allocation =
@@ -1512,8 +1562,16 @@ static unsigned int dyn_statement(struct DynParser *parser) {
     }
     if (parser->lexer.current.kind == DYN_TOK_TYPEDEF)
         return dyn_typedef_declaration(parser);
+    if (parser->lexer.current.kind == DYN_TOK_STATIC) {
+        dyn_lexer_next(&parser->lexer);
+        if (!dyn_declaration_start(parser)) {
+            parser->error = 1;
+            return DYN_INVALID_NODE;
+        }
+        return dyn_declaration(parser, 1);
+    }
     if (dyn_declaration_start(parser))
-        return dyn_declaration(parser);
+        return dyn_declaration(parser, 0);
     if (parser->lexer.current.kind == DYN_TOK_RETURN) {
         dyn_lexer_next(&parser->lexer);
         if (parser->lexer.current.kind == DYN_TOK_SEMICOLON)
@@ -1576,7 +1634,7 @@ static unsigned int dyn_statement(struct DynParser *parser) {
         dyn_lexer_next(&parser->lexer);
         dyn_take(parser, DYN_TOK_LPAREN);
         if (dyn_declaration_start(parser))
-            initializer = dyn_declaration(parser);
+            initializer = dyn_declaration(parser, 0);
         else {
             if (parser->lexer.current.kind != DYN_TOK_SEMICOLON)
                 initializer = dyn_expression(parser);

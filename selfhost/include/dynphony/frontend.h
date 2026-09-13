@@ -171,6 +171,8 @@ struct DynLocal {
     int vla;
     unsigned int scope_depth;
     int active;
+    int static_storage;
+    unsigned int static_global;
 };
 
 struct DynFunction {

@@ -111,9 +111,18 @@ static void dyn_compare_zero(struct DynEmitter *e, unsigned int reg) {
     dyn_byte(e, 0x3au); dyn_byte(e, reg); dyn_u16(e, 0u);
 }
 
+static void dyn_global_address(struct DynEmitter *e, unsigned int global,
+                               unsigned int destination);
+
 static void dyn_local_address(struct DynEmitter *e, unsigned int local,
                               unsigned int destination) {
     unsigned int offset;
+    if (e->program->locals[local].static_storage) {
+        dyn_global_address(
+            e, e->program->locals[local].static_global, destination
+        );
+        return;
+    }
     if (local < e->current_local_base) { e->error = 1; return; }
     offset = e->program->locals[local].offset;
     if (offset <= 65535u)

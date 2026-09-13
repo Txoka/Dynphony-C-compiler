@@ -183,6 +183,32 @@ class BootstrapCompilerTests(unittest.TestCase):
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(), 37)
 
+    def test_function_scope_static_scalar_lifetime(self):
+        source = b'''int next(void) {
+            static int value = 10;
+            return ++value;
+        }
+        int other(void) {
+            static int value = 20;
+            return ++value;
+        }
+        int main(void) {
+            int first = next();
+            int second = next();
+            return first * 100 + second + other() - 21;
+        }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 1112)
+
+        status, _, binary, _ = run_stage0(
+            self.compiler,
+            b"int main(void){int x=1; static int bad=x; return bad;}",
+        )
+        self.assertEqual(status, 4)
+        self.assertEqual(binary, b"")
+
     def test_functions_parameters_nested_calls_and_recursion(self):
         source = b"""unsigned int factorial(unsigned int value) {
             if (value <= 1) return 1;

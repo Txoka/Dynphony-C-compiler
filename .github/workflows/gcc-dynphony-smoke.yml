@@ -3,6 +3,8 @@ name: GCC Dynphony smoke build
 on:
   push:
     branches: [gcc-backend-bootstrap]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:

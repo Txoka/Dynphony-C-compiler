@@ -12,6 +12,7 @@ install:
 
 test: native
 	$(PYTHON) -m unittest discover -s tests -v
+	$(PYTHON) -m unittest discover -s selfhost/tests -v
 
 selfhost:
 	$(MAKE) -C selfhost stage0

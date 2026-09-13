@@ -28,7 +28,10 @@ jobs:
           p = Path('/tmp/gcc-16.2.0/gcc/config.gcc')
           s = p.read_text()
           needle = 'case ${target} in\n'
-          stanza = '''case ${target} in\n  moxie-*-elf*)\n    tm_file="${tm_file} elfos.h newlib-stdint.h dynphony/dynphony.h"\n    tmake_file="${tmake_file} dynphony/t-dynphony"\n    target_has_targetm_common=no\n    ;;\n'''
+          # Reuse config.sub's accepted moxie tuple only as a bootstrap alias,
+          # but select Dynphony as GCC's actual cpu_type.  This makes GCC pick
+          # dynphony.h/.md/.cc/.opt/t-dynphony rather than Moxie's backend.
+          stanza = '''case ${target} in\n  moxie-*-elf*)\n    cpu_type=dynphony\n    target_has_targetm_common=no\n    ;;\n'''
           if needle not in s:
               raise SystemExit('config.gcc case anchor not found')
           s = s.replace(needle, stanza, 1)
@@ -74,11 +77,6 @@ jobs:
           EOF
           /tmp/gcc-build/gcc/xgcc -B/tmp/gcc-build/gcc/ -S -O2 -ffreestanding -fno-builtin /tmp/towers.c -o /tmp/towers.s
           cat /tmp/towers.s
-          python3 - <<'PY'
-          from pathlib import Path
-          s = Path('/tmp/towers.s').read_text()
-          print('ASM_LINES', len(s.splitlines()))
-          PY
 
       - uses: actions/upload-artifact@v4
         if: always()

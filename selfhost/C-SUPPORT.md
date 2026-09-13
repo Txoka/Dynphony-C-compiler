@@ -33,6 +33,8 @@ The project preprocessor supports quoted and include-root `#include`, object
 and function-like macros with up to eight parameters, macro redefinition,
 `#undef`, project definitions, include guards,
 `#pragma once`, recursive-include rejection, `#error`, and conditional groups.
+Conditional groups support `#if` and `#elif` integer expressions, including
+`defined`, unary, arithmetic, shift, comparison, bitwise, and logical operators.
 
 ### Grammar and semantics
 

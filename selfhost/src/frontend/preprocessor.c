@@ -79,6 +79,284 @@ static int dyn_macro_defined(
     return dyn_find_macro(preprocessor, name, length) != 0xffffffffu;
 }
 
+struct DynCondition {
+    const struct DynPreprocessor *preprocessor;
+    const char *text;
+    unsigned int length;
+    unsigned int position;
+    unsigned int depth;
+    int error;
+};
+
+static void dyn_condition_skip(struct DynCondition *condition) {
+    while (condition->position < condition->length
+        && dyn_preprocessor_space(condition->text[condition->position]))
+        condition->position += 1u;
+}
+
+static int dyn_condition_take(
+    struct DynCondition *condition,
+    const char *operator_text,
+    unsigned int operator_length
+) {
+    dyn_condition_skip(condition);
+    if (condition->position + operator_length > condition->length
+        || !dyn_text_equal(
+            condition->text + condition->position, operator_length,
+            operator_text, operator_length
+        )) return 0;
+    condition->position += operator_length;
+    return 1;
+}
+
+static unsigned int dyn_condition_or(struct DynCondition *condition);
+
+static unsigned int dyn_condition_primary(struct DynCondition *condition) {
+    unsigned int value = 0u;
+    unsigned int start;
+    unsigned int macro;
+    dyn_condition_skip(condition);
+    if (dyn_condition_take(condition, "(", 1u)) {
+        value = dyn_condition_or(condition);
+        if (!dyn_condition_take(condition, ")", 1u)) condition->error = 1;
+        return value;
+    }
+    start = condition->position;
+    if (start < condition->length
+        && condition->text[start] >= '0' && condition->text[start] <= '9') {
+        unsigned int base = 10u;
+        if (condition->text[start] == '0') {
+            base = 8u;
+            condition->position += 1u;
+            if (condition->position < condition->length
+                && (condition->text[condition->position] == 'x'
+                    || condition->text[condition->position] == 'X')) {
+                base = 16u;
+                condition->position += 1u;
+            }
+        }
+        while (condition->position < condition->length) {
+            char digit = condition->text[condition->position];
+            unsigned int decoded;
+            if (digit >= '0' && digit <= '9') decoded = (unsigned int)(digit - '0');
+            else if (digit >= 'a' && digit <= 'f') decoded = (unsigned int)(digit - 'a') + 10u;
+            else if (digit >= 'A' && digit <= 'F') decoded = (unsigned int)(digit - 'A') + 10u;
+            else break;
+            if (decoded >= base) break;
+            value = value * base + decoded;
+            condition->position += 1u;
+        }
+        while (condition->position < condition->length
+            && (condition->text[condition->position] == 'u'
+                || condition->text[condition->position] == 'U'
+                || condition->text[condition->position] == 'l'
+                || condition->text[condition->position] == 'L'))
+            condition->position += 1u;
+        return value;
+    }
+    if (start < condition->length
+        && ((condition->text[start] >= 'a' && condition->text[start] <= 'z')
+            || (condition->text[start] >= 'A' && condition->text[start] <= 'Z')
+            || condition->text[start] == '_')) {
+        while (condition->position < condition->length
+            && dyn_name_char(condition->text[condition->position]))
+            condition->position += 1u;
+        if (dyn_word(
+            condition->text + start, condition->position - start,
+            "defined", 7u
+        )) {
+            unsigned int name_start;
+            unsigned int name_end;
+            int parenthesized = dyn_condition_take(condition, "(", 1u);
+            dyn_condition_skip(condition);
+            name_start = condition->position;
+            while (condition->position < condition->length
+                && dyn_name_char(condition->text[condition->position]))
+                condition->position += 1u;
+            name_end = condition->position;
+            if (name_start == name_end || (parenthesized
+                && !dyn_condition_take(condition, ")", 1u))) {
+                condition->error = 1;
+                return 0u;
+            }
+            return dyn_macro_defined(
+                condition->preprocessor,
+                condition->text + name_start, name_end - name_start
+            );
+        }
+        macro = dyn_find_macro(
+            condition->preprocessor, condition->text + start,
+            condition->position - start
+        );
+        if (macro != 0xffffffffu
+            && !condition->preprocessor->macros[macro].function_like
+            && condition->depth < DYN_PP_MAX_DEPTH) {
+            struct DynCondition nested;
+            nested.preprocessor = condition->preprocessor;
+            nested.text = condition->preprocessor->macros[macro].replacement.data;
+            nested.length = condition->preprocessor->macros[macro].replacement.length;
+            nested.position = 0u;
+            nested.depth = condition->depth + 1u;
+            nested.error = 0;
+            value = dyn_condition_or(&nested);
+            dyn_condition_skip(&nested);
+            if (nested.error || nested.position != nested.length)
+                condition->error = 1;
+            return value;
+        }
+        return 0u;
+    }
+    condition->error = 1;
+    return 0u;
+}
+
+static unsigned int dyn_condition_unary(struct DynCondition *condition) {
+    if (dyn_condition_take(condition, "!", 1u))
+        return !dyn_condition_unary(condition);
+    if (dyn_condition_take(condition, "~", 1u))
+        return ~dyn_condition_unary(condition);
+    if (dyn_condition_take(condition, "+", 1u))
+        return dyn_condition_unary(condition);
+    if (dyn_condition_take(condition, "-", 1u))
+        return 0u - dyn_condition_unary(condition);
+    return dyn_condition_primary(condition);
+}
+
+static unsigned int dyn_condition_multiply(struct DynCondition *condition) {
+    unsigned int value = dyn_condition_unary(condition);
+    while (!condition->error) {
+        if (dyn_condition_take(condition, "*", 1u))
+            value *= dyn_condition_unary(condition);
+        else if (dyn_condition_take(condition, "/", 1u)) {
+            unsigned int right = dyn_condition_unary(condition);
+            if (!right) condition->error = 1; else value /= right;
+        } else if (dyn_condition_take(condition, "%", 1u)) {
+            unsigned int right = dyn_condition_unary(condition);
+            if (!right) condition->error = 1; else value %= right;
+        } else break;
+    }
+    return value;
+}
+
+static unsigned int dyn_condition_add(struct DynCondition *condition) {
+    unsigned int value = dyn_condition_multiply(condition);
+    while (!condition->error) {
+        if (dyn_condition_take(condition, "+", 1u))
+            value += dyn_condition_multiply(condition);
+        else if (dyn_condition_take(condition, "-", 1u))
+            value -= dyn_condition_multiply(condition);
+        else break;
+    }
+    return value;
+}
+
+static unsigned int dyn_condition_shift(struct DynCondition *condition) {
+    unsigned int value = dyn_condition_add(condition);
+    while (!condition->error) {
+        if (dyn_condition_take(condition, "<<", 2u))
+            value <<= dyn_condition_add(condition) & 31u;
+        else if (dyn_condition_take(condition, ">>", 2u))
+            value >>= dyn_condition_add(condition) & 31u;
+        else break;
+    }
+    return value;
+}
+
+static unsigned int dyn_condition_relation(struct DynCondition *condition) {
+    unsigned int value = dyn_condition_shift(condition);
+    while (!condition->error) {
+        if (dyn_condition_take(condition, "<=", 2u)) value = value <= dyn_condition_shift(condition);
+        else if (dyn_condition_take(condition, ">=", 2u)) value = value >= dyn_condition_shift(condition);
+        else if (dyn_condition_take(condition, "<", 1u)) value = value < dyn_condition_shift(condition);
+        else if (dyn_condition_take(condition, ">", 1u)) value = value > dyn_condition_shift(condition);
+        else break;
+    }
+    return value;
+}
+
+static unsigned int dyn_condition_equal(struct DynCondition *condition) {
+    unsigned int value = dyn_condition_relation(condition);
+    while (!condition->error) {
+        if (dyn_condition_take(condition, "==", 2u)) value = value == dyn_condition_relation(condition);
+        else if (dyn_condition_take(condition, "!=", 2u)) value = value != dyn_condition_relation(condition);
+        else break;
+    }
+    return value;
+}
+
+static unsigned int dyn_condition_bit_and(struct DynCondition *condition) {
+    unsigned int value = dyn_condition_equal(condition);
+    while (!condition->error) {
+        unsigned int saved = condition->position;
+        if (!dyn_condition_take(condition, "&", 1u)) break;
+        if (dyn_condition_take(condition, "&", 1u)) {
+            condition->position = saved;
+            break;
+        }
+        value &= dyn_condition_equal(condition);
+    }
+    return value;
+}
+
+static unsigned int dyn_condition_bit_xor(struct DynCondition *condition) {
+    unsigned int value = dyn_condition_bit_and(condition);
+    while (dyn_condition_take(condition, "^", 1u))
+        value ^= dyn_condition_bit_and(condition);
+    return value;
+}
+
+static unsigned int dyn_condition_bit_or(struct DynCondition *condition) {
+    unsigned int value = dyn_condition_bit_xor(condition);
+    while (!condition->error) {
+        unsigned int saved = condition->position;
+        if (!dyn_condition_take(condition, "|", 1u)) break;
+        if (dyn_condition_take(condition, "|", 1u)) {
+            condition->position = saved;
+            break;
+        }
+        value |= dyn_condition_bit_xor(condition);
+    }
+    return value;
+}
+
+static unsigned int dyn_condition_and(struct DynCondition *condition) {
+    unsigned int value = dyn_condition_bit_or(condition);
+    while (dyn_condition_take(condition, "&&", 2u)) {
+        unsigned int right = dyn_condition_bit_or(condition);
+        value = value && right;
+    }
+    return value;
+}
+
+static unsigned int dyn_condition_or(struct DynCondition *condition) {
+    unsigned int value = dyn_condition_and(condition);
+    while (dyn_condition_take(condition, "||", 2u)) {
+        unsigned int right = dyn_condition_and(condition);
+        value = value || right;
+    }
+    return value;
+}
+
+static int dyn_condition(
+    const struct DynPreprocessor *preprocessor,
+    const char *text,
+    unsigned int length,
+    int *valid
+) {
+    struct DynCondition condition;
+    unsigned int value;
+    condition.preprocessor = preprocessor;
+    condition.text = text;
+    condition.length = length;
+    condition.position = 0u;
+    condition.depth = 0u;
+    condition.error = 0;
+    value = dyn_condition_or(&condition);
+    dyn_condition_skip(&condition);
+    *valid = !condition.error && condition.position == condition.length;
+    return value != 0u;
+}
+
 static void dyn_define(
     struct DynPreprocessor *preprocessor,
     const char *name, unsigned int length,
@@ -453,6 +731,7 @@ static void dyn_process_file(
     int active = 1;
     int parent[DYN_PP_MAX_DEPTH];
     int taken[DYN_PP_MAX_DEPTH];
+    int seen_else[DYN_PP_MAX_DEPTH];
     unsigned int conditional_depth = 0;
     if (depth >= DYN_PP_MAX_DEPTH || file >= preprocessor->file_count) {
         preprocessor->error = 1;
@@ -492,29 +771,61 @@ static void dyn_process_file(
                 source + directive_start, directive_length, "ifndef", 6u
             ) || dyn_word(
                 source + directive_start, directive_length, "ifdef", 5u
+            ) || dyn_word(
+                source + directive_start, directive_length, "if", 2u
             )) {
                 int condition;
+                int valid = 1;
                 unsigned int argument_length = line_end - argument_start;
                 if (conditional_depth >= DYN_PP_MAX_DEPTH) {
                     preprocessor->error = 1;
                     return;
                 }
                 parent[conditional_depth] = active;
-                condition = dyn_macro_defined(
-                    preprocessor, source + argument_start, argument_length
+                if (!active) condition = 0;
+                else if (directive_length == 2u) condition = dyn_condition(
+                    preprocessor, source + argument_start, argument_length,
+                    &valid
                 );
-                if (directive_length == 6u) condition = !condition;
+                else {
+                    condition = dyn_macro_defined(
+                        preprocessor, source + argument_start, argument_length
+                    );
+                    if (directive_length == 6u) condition = !condition;
+                }
+                if (!valid) preprocessor->error = 1;
                 taken[conditional_depth] = condition;
+                seen_else[conditional_depth] = 0;
                 conditional_depth += 1u;
                 active = active && condition;
+            } else if (dyn_word(
+                source + directive_start, directive_length, "elif", 4u
+            )) {
+                if (!conditional_depth) preprocessor->error = 1;
+                else {
+                    unsigned int state = conditional_depth - 1u;
+                    int valid = 1;
+                    int condition = 0;
+                    if (seen_else[state]) preprocessor->error = 1;
+                    else if (parent[state] && !taken[state]) condition =
+                        dyn_condition(
+                            preprocessor, source + argument_start,
+                            line_end - argument_start, &valid
+                        );
+                    if (!valid) preprocessor->error = 1;
+                    active = parent[state] && !taken[state] && condition;
+                    taken[state] = taken[state] || condition;
+                }
             } else if (dyn_word(
                 source + directive_start, directive_length, "else", 4u
             )) {
                 if (!conditional_depth) preprocessor->error = 1;
                 else {
                     unsigned int state = conditional_depth - 1u;
+                    if (seen_else[state]) preprocessor->error = 1;
                     active = parent[state] && !taken[state];
                     taken[state] = 1;
+                    seen_else[state] = 1;
                 }
             } else if (dyn_word(
                 source + directive_start, directive_length, "endif", 5u

@@ -369,10 +369,19 @@ class BootstrapCompilerTests(unittest.TestCase):
                 "main.c",
                 b'''#define ADD(left, right) ((left) + (right))
                 #define ZERO() 0
+                #define LEVEL 3
+                #if defined(LEVEL) && ((LEVEL * 10 + 12) == 42)
+                #define CONDITIONAL 42
+                #elif LEVEL == 3
+                #error wrong conditional branch
+                #else
+                #error wrong fallback branch
+                #endif
                 #include "value.h"
                 #include "value.h"
                 int main(void) {
-                    return ADD(selected(), 0) + ZERO();
+                    return ADD(selected(), 0) + ZERO()
+                        + CONDITIONAL - 42;
                 }''',
             ),
         ))
@@ -396,6 +405,13 @@ class BootstrapCompilerTests(unittest.TestCase):
 
         status, _, binary, _ = run_stage0(
             self.compiler, b"#error deliberate failure\nint main(void){return 0;}"
+        )
+        self.assertEqual(status, 4)
+        self.assertEqual(binary, b"")
+
+        status, _, binary, _ = run_stage0(
+            self.compiler,
+            b"#if (1 + )\n#endif\nint main(void){return 0;}",
         )
         self.assertEqual(status, 4)
         self.assertEqual(binary, b"")

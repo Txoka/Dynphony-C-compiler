@@ -35,6 +35,24 @@
 { "zr","r1","r2","r3","r4","r5","r6","r7", \
   "r8","r9","r10","r11","r12","r13","sp","flags" }
 
+/* GCC's generic register allocator requires every target to describe its
+   hard-register classes.  Dynphony has one general 32-bit register file;
+   r0/r12/r14 availability is controlled separately by FIXED_REGISTERS. */
+enum reg_class
+{
+  NO_REGS,
+  GENERAL_REGS,
+  LIM_REG_CLASSES
+};
+
+#define N_REG_CLASSES ((int) LIM_REG_CLASSES)
+#define REG_CLASS_NAMES { "NO_REGS", "GENERAL_REGS" }
+#define REG_CLASS_CONTENTS \
+{ \
+  { 0x0000 }, \
+  { 0xffff } \
+}
+
 #define STACK_POINTER_REGNUM 14
 #define HARD_FRAME_POINTER_REGNUM 12
 #define FRAME_POINTER_REGNUM 12

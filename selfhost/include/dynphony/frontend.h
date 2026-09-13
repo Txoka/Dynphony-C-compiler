@@ -170,6 +170,7 @@ struct DynLocal {
     unsigned int total_size_node;
     int vla;
     unsigned int scope_depth;
+    int active;
 };
 
 struct DynFunction {
@@ -180,6 +181,7 @@ struct DynFunction {
     unsigned int local_count;
     unsigned int parameter_count;
     unsigned int frame_size;
+    int defined;
 };
 
 struct DynGlobal {
@@ -277,6 +279,7 @@ struct DynAstProgram {
     struct DynDimension *dimensions;
     unsigned int dimension_count;
     unsigned int dimension_capacity;
+    unsigned int error_position;
 };
 
 void dyn_lexer_init(

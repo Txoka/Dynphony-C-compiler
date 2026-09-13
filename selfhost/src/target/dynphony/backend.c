@@ -1,3 +1,6 @@
+#define dyn_expression dyn_backend_expression
+#define dyn_statement dyn_backend_statement
+
 #include <stdlib.h>
 #include "dynphony/target.h"
 
@@ -279,8 +282,17 @@ static void dyn_lvalue_address(struct DynEmitter *e,
         else if (node->value == 4u)
             dyn_alu_immediate(e, 0x27u, reg + 1u, reg + 1u, 2u);
         else if (node->value != 1u) {
-            dyn_constant(e, reg + 2u, node->value);
-            dyn_multiply(e, reg + 1u);
+            if (reg + 1u > 3u) {
+                dyn_push(e, reg);
+                dyn_move(e, 1u, reg + 1u);
+                dyn_constant(e, 2u, node->value);
+                dyn_multiply(e, 1u);
+                dyn_move(e, reg + 1u, 1u);
+                dyn_pop(e, reg);
+            } else {
+                dyn_constant(e, reg + 2u, node->value);
+                dyn_multiply(e, reg + 1u);
+            }
         }
         dyn_alu(e, 0x24u, reg, reg, reg + 1u);
     } else if (node->kind == DYN_NODE_MEMBER) {
@@ -351,6 +363,16 @@ static void dyn_expression(struct DynEmitter *e,
     unsigned int done;
     if (index >= program->count || reg >= 7u) { e->error = 1; return; }
     node = &program->nodes[index];
+    if ((node->kind == DYN_NODE_DIVIDE || node->kind == DYN_NODE_REMAINDER)
+        && reg > 1u) {
+        dyn_expression(e, program, node->left, 1u);
+        dyn_push(e, 1u);
+        dyn_expression(e, program, node->right, 2u);
+        dyn_pop(e, 1u);
+        dyn_divide(e, 1u, node->kind == DYN_NODE_REMAINDER);
+        dyn_move(e, reg, 1u);
+        return;
+    }
     if (node->kind == DYN_NODE_NUMBER) { dyn_constant(e, reg, node->value); return; }
     if (node->kind == DYN_NODE_LOCAL) {
         if (node->value >= program->local_count) { e->error = 1; return; }
@@ -398,9 +420,17 @@ static void dyn_expression(struct DynEmitter *e,
         } else if (node->value == 5u) {
             dyn_expression(e, program, node->left, reg);
             dyn_byte(e, 0x63u); dyn_byte(e, reg << 4); dyn_byte(e, reg);
+        } else if (node->value == 7u) {
+            dyn_expression(e, program, node->left, reg);
+            dyn_constant(e, 7u, 0x00ffffffu);
+            dyn_alu(e, 0x22u, reg, reg, 7u);
+            dyn_alu(e, 0x22u, reg + 1u, 14u, 7u);
+            dyn_alu(e, 0x25u, reg, reg + 1u, reg);
         } else if (node->value == 4u || node->value == 6u) {
             dyn_expression(e, program, node->left, reg);
+            dyn_push(e, reg);
             dyn_expression(e, program, node->right, reg + 1u);
+            dyn_pop(e, reg);
             if (node->value == 4u) {
                 dyn_byte(e, 0x04u); dyn_byte(e, reg); dyn_byte(e, reg + 1u);
             } else {
@@ -776,7 +806,7 @@ int dyn_emit_image(const struct DynIrModule *module, unsigned int load_address,
         unsigned int return_start;
         unsigned int epilogue;
         unsigned int frame_size;
-        if (function->body == DYN_INVALID_NODE) {
+        if (!function->defined) {
             function_index += 1u;
             continue;
         }

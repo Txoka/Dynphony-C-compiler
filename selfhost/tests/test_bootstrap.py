@@ -1,12 +1,13 @@
 import unittest
 from pathlib import Path
 
-from dynphony.emulator import Machine
+from dynphony.emulator import Machine, native_available
 from dynphony.project import (
     Project,
     ProjectFile,
     decode_control,
     make_persistent_image,
+    project_from_directory,
 )
 
 from selfhost.tools.bootstrap import build_stage0, run_machine, run_stage0
@@ -145,9 +146,10 @@ class BootstrapCompilerTests(unittest.TestCase):
         self.assertEqual(program.run(), 10)
 
     def test_runtime_device_intrinsics(self):
-        source = b"""int main(void) {
+        source = b"""unsigned int read_value(void) { return 12; }
+        int main(void) {
             unsigned int key = keyboard();
-            persistent_store(4, key + time());
+            persistent_store(4, read_value());
             screen(2, key);
             return persistent_load(4) ^ time_high();
         }"""
@@ -210,6 +212,46 @@ class BootstrapCompilerTests(unittest.TestCase):
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(), 34)
 
+    def test_void_function_bare_return(self):
+        source = b'''int value;
+        int pick(int input, int output) { return input + output; }
+        void *identity(void *pointer) { return pointer; }
+        void no_operation(void) {}
+        void set_value(int next) {
+            value = next;
+            return;
+        }
+        int main(void) {
+            no_operation();
+            int next = pick(40, 2);
+            int *pointer = identity(&next);
+            set_value(*pointer);
+            return value;
+        }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 42)
+
+    def test_nested_division_spills_to_low_scratch_registers(self):
+        source = b"int main(void) { return 1 + (82 / 2); }"
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 42)
+
+    def test_deep_subscript_scaling_spills_to_low_scratch_registers(self):
+        source = b'''struct Triple { int a; int b; int c; };
+        int main(void) {
+            struct Triple values[2];
+            values[1].c = 39;
+            return 1 + (2 + values[1].c);
+        }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 42)
+
     def test_forward_prototype_and_six_argument_abi(self):
         source = b"""int sum(int a, int b, int c, int d, int e, int f);
         int main(void) { return sum(1, 2, 3, 4, 5, 6); }
@@ -243,6 +285,55 @@ class BootstrapCompilerTests(unittest.TestCase):
             ProjectFile("main.c", b'''int add(int left, int right);
             int main(void) { return add(19, 23); }'''),
         ))
+        persistent = make_persistent_image(
+            project, persistent_size=1 << 16, program_load_address=8192
+        )
+        machine = Machine(self.compiler.image.binary, persistent_size=1 << 16)
+        machine.persistent[:] = persistent
+        status = run_machine(
+            machine, self.compiler.image.symbols["_halt"], 50_000_000
+        )
+        control = decode_control(machine.persistent)
+        self.assertEqual(status, 0)
+        self.assertEqual(control.status, 0)
+        record = machine.persistent[
+            control.output_address:
+            control.output_address + control.output_byte_length
+        ]
+        image_length = int.from_bytes(record[:4], "big")
+        binary = bytes(record[4:4 + image_length])
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 42)
+
+    def test_project_preprocesses_relative_and_rooted_includes(self):
+        project = Project(
+            (
+                ProjectFile(
+                    "include/constants.h",
+                    b'''#ifndef CONSTANTS_H
+                    #define CONSTANTS_H
+                    #define BASE_VALUE 40
+                    #endif''',
+                    2,
+                ),
+                ProjectFile(
+                    "src/local.h", b"int local_value(void);", 2
+                ),
+                ProjectFile(
+                    "src/main.c",
+                    b'''#include <constants.h>
+                    #include <constants.h>
+                    #include "local.h"
+                    int local_value(void) { return PROJECT_OFFSET; }
+                    int main(void) {
+                        char *text = "BASE_VALUE";
+                        return BASE_VALUE + local_value() + (text[0] == 'B');
+                    }''',
+                ),
+            ),
+            ("include",),
+            ("PROJECT_OFFSET=1",),
+        )
         persistent = make_persistent_image(
             project, persistent_size=1 << 16, program_load_address=8192
         )
@@ -349,6 +440,24 @@ class BootstrapCompilerTests(unittest.TestCase):
             pointer++;
             *(pointer + 2) = 2;
             return values[2] + values[3] + (*(2 + values) - 40);
+        }'''
+        status, compiler, binary, control = run_stage0(self.compiler, source)
+        self.assertEqual(status, 0)
+        program = Machine(binary, load_address=control.program_load_address)
+        self.assertEqual(program.run(), 42)
+
+    def test_sibling_blocks_may_reuse_local_names(self):
+        source = b'''int main(void) {
+            int total = 0;
+            if (1) {
+                int value = 19;
+                total += value;
+            }
+            {
+                int value = 23;
+                total += value;
+            }
+            return total;
         }'''
         status, compiler, binary, control = run_stage0(self.compiler, source)
         self.assertEqual(status, 0)
@@ -478,6 +587,45 @@ class BootstrapCompilerTests(unittest.TestCase):
         self.assertEqual(status, 0)
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(), 42)
+
+    @unittest.skipUnless(native_available(), "requires native emulator")
+    def test_compiler_reproduces_itself_byte_for_byte(self):
+        persistent_size = 1 << 24
+        load_address = 8192
+        project = project_from_directory(
+            "selfhost", exclude=("build", "examples", "tests")
+        )
+        persistent = make_persistent_image(
+            project, persistent_size=persistent_size,
+            program_load_address=load_address,
+        )
+        stage1 = Machine(
+            self.compiler.image.binary, persistent_size=persistent_size
+        )
+        stage1.persistent[:] = persistent
+        self.assertEqual(run_machine(
+            stage1, self.compiler.image.symbols["_halt"], 900_000_000
+        ), 0)
+        control1 = decode_control(stage1.persistent)
+        self.assertEqual(control1.status, 0)
+        record1 = stage1.persistent[control1.output_address:]
+        length1 = int.from_bytes(record1[:4], "big")
+        stage2_binary = bytes(record1[4:4 + length1])
+
+        stage2 = Machine(
+            stage2_binary, load_address=load_address,
+            persistent_size=persistent_size,
+        )
+        stage2.persistent[:] = persistent
+        self.assertEqual(
+            run_machine(stage2, load_address + 24, 1_000_000_000), 0
+        )
+        control2 = decode_control(stage2.persistent)
+        self.assertEqual(control2.status, 0)
+        record2 = stage2.persistent[control2.output_address:]
+        length2 = int.from_bytes(record2[:4], "big")
+        stage3_binary = bytes(record2[4:4 + length2])
+        self.assertEqual(stage3_binary, stage2_binary)
 
 
 if __name__ == "__main__":

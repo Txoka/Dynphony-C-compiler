@@ -9,7 +9,8 @@ stage0:
 	mkdir -p $(BUILD_DIR)
 	cd .. && $(PYTHON) -m dynphony \
 		selfhost/src/main.c selfhost/src/compiler.c \
-		selfhost/src/frontend/lexer.c selfhost/src/frontend/parser.c \
+		selfhost/src/frontend/lexer.c selfhost/src/frontend/preprocessor.c \
+		selfhost/src/frontend/parser.c \
 		selfhost/src/frontend/sema.c selfhost/src/middle/lower.c \
 		selfhost/src/middle/optimize.c \
 		selfhost/src/target/dynphony/backend.c \

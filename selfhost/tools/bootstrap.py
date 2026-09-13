@@ -20,6 +20,7 @@ STAGE0_SOURCES = (
     "src/main.c",
     "src/compiler.c",
     "src/frontend/lexer.c",
+    "src/frontend/preprocessor.c",
     "src/frontend/parser.c",
     "src/frontend/sema.c",
     "src/middle/lower.c",

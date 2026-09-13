@@ -4,10 +4,10 @@ This document describes C accepted **by the compiler in `selfhost/`**, not the
 larger subset accepted by the Python compiler that currently builds it. Every
 new self-hosting language feature should be added here with an execution test.
 
-## Current stage: stage 0.16
+## Current stage: self-hosting baseline
 
-Stage 0.16 accepts one or more translation-unit records containing a single
-linked `main` definition.
+The compiler accepts one or more translation-unit records containing a single
+linked `main` definition and can reproduce its own compiler image.
 The original constant-return form remains supported:
 
 ```c
@@ -29,7 +29,8 @@ function definitions, and file-scope object declarations may surround it.
 - Decimal, octal, and hexadecimal integer constants with `u`/`l` suffixes.
 - Character constants and common single-character escapes.
 
-Macros and `#include` are not processed yet.
+The project preprocessor supports quoted and include-root `#include`, object
+macros, project definitions, include guards, and conditional groups.
 
 ### Grammar and semantics
 
@@ -134,8 +135,8 @@ int dyn_compile_buffer(const char *, unsigned int);
 The executable `main` reads DCC1 and DCP1 through persistent storage and writes
 a loader-compatible executable record there. This stage merges translation-unit
 records in deterministic DCP1 order and resolves ordinary external function and
-object references over that merged program. Per-file preprocessing and private
-file scope, including correct `static` isolation, remain pending.
+object references over that merged program. General private file scope,
+including automatic `static` isolation, remains pending.
 
 ## Definition of self-hostable
 
@@ -151,3 +152,5 @@ compiler image. The test is:
 
 Optimization is not required for this milestone. Correct parsing, typing,
 linking, lowering, layout, and deterministic code generation are required.
+The automated bootstrap test performs these stages and requires stage 2 and
+stage 3 to be byte-identical.

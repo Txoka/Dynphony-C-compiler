@@ -3,6 +3,7 @@
 #include "dynphony/compiler.h"
 #include "dynphony/frontend.h"
 #include "dynphony/middle.h"
+#include "dynphony/preprocessor.h"
 #include "dynphony/target.h"
 
 struct DynProjectReader {
@@ -13,6 +14,12 @@ struct DynProjectReader {
 };
 
 static unsigned int dyn_output_length;
+
+static void dyn_copy_persistent(
+    char *destination,
+    unsigned int address,
+    unsigned int length
+);
 
 static unsigned int dyn_project_u32(struct DynProjectReader *reader) {
     unsigned int value;
@@ -48,6 +55,51 @@ static int dyn_project_skip_blob(
     *length = size;
     reader->position += padded;
     return 1;
+}
+
+static int dyn_project_read_text(
+    struct DynProjectReader *reader,
+    struct DynProjectText *text
+) {
+    unsigned int address;
+    if (!dyn_project_skip_blob(reader, &address, &text->length)) return 0;
+    text->data = malloc(text->length + 1u);
+    if (!text->data) {
+        reader->error = 1;
+        return 0;
+    }
+    dyn_copy_persistent(text->data, address, text->length);
+    text->data[text->length] = 0;
+    return 1;
+}
+
+static void dyn_free_project_texts(
+    struct DynProjectFile *files,
+    unsigned int file_count,
+    struct DynProjectText *roots,
+    unsigned int root_count,
+    struct DynProjectText *definitions,
+    unsigned int definition_count
+) {
+    unsigned int index = 0;
+    while (index < file_count) {
+        if (files[index].path.data) free(files[index].path.data);
+        if (files[index].contents.data) free(files[index].contents.data);
+        index += 1u;
+    }
+    index = 0;
+    while (index < root_count) {
+        if (roots[index].data) free(roots[index].data);
+        index += 1u;
+    }
+    index = 0;
+    while (index < definition_count) {
+        if (definitions[index].data) free(definitions[index].data);
+        index += 1u;
+    }
+    if (files) free(files);
+    if (roots) free(roots);
+    if (definitions) free(definitions);
 }
 
 static void dyn_copy_persistent(
@@ -103,33 +155,35 @@ int dyn_compile_buffer(
 ) {
     struct DynAstProgram program;
     struct DynIrModule module;
-    unsigned int capacity;
+    unsigned int node_capacity;
+    unsigned int symbol_capacity;
     int status = DYN_COMPILE_OK;
 
     *output_length = 0;
     if (length > 1048576u) return DYN_COMPILE_INPUT_TOO_LARGE;
-    capacity = length + 1u;
-    program.nodes = calloc(capacity, sizeof(struct DynNode));
+    node_capacity = length + 1u;
+    symbol_capacity = length / 8u + 64u;
+    program.nodes = malloc(node_capacity * sizeof(struct DynNode));
     if (!program.nodes) return DYN_COMPILE_OUT_OF_MEMORY;
-    program.locals = calloc(capacity, sizeof(struct DynLocal));
+    program.locals = malloc(symbol_capacity * sizeof(struct DynLocal));
     if (!program.locals) {
         free(program.nodes);
         return DYN_COMPILE_OUT_OF_MEMORY;
     }
-    program.functions = calloc(capacity, sizeof(struct DynFunction));
+    program.functions = malloc(symbol_capacity * sizeof(struct DynFunction));
     if (!program.functions) {
         free(program.locals);
         free(program.nodes);
         return DYN_COMPILE_OUT_OF_MEMORY;
     }
-    program.globals = calloc(capacity, sizeof(struct DynGlobal));
+    program.globals = malloc(symbol_capacity * sizeof(struct DynGlobal));
     if (!program.globals) {
         free(program.functions);
         free(program.locals);
         free(program.nodes);
         return DYN_COMPILE_OUT_OF_MEMORY;
     }
-    program.constants = calloc(capacity, sizeof(struct DynConstant));
+    program.constants = malloc(symbol_capacity * sizeof(struct DynConstant));
     if (!program.constants) {
         free(program.globals);
         free(program.functions);
@@ -137,7 +191,7 @@ int dyn_compile_buffer(
         free(program.nodes);
         return DYN_COMPILE_OUT_OF_MEMORY;
     }
-    program.aliases = calloc(capacity, sizeof(struct DynTypeAlias));
+    program.aliases = malloc(symbol_capacity * sizeof(struct DynTypeAlias));
     if (!program.aliases) {
         free(program.constants);
         free(program.globals);
@@ -146,9 +200,9 @@ int dyn_compile_buffer(
         free(program.nodes);
         return DYN_COMPILE_OUT_OF_MEMORY;
     }
-    program.structs = calloc(capacity, sizeof(struct DynStruct));
-    program.members = calloc(capacity, sizeof(struct DynMember));
-    program.dimensions = calloc(capacity, sizeof(struct DynDimension));
+    program.structs = malloc(symbol_capacity * sizeof(struct DynStruct));
+    program.members = malloc(symbol_capacity * sizeof(struct DynMember));
+    program.dimensions = malloc(symbol_capacity * sizeof(struct DynDimension));
     if (!program.structs || !program.members || !program.dimensions) {
         if (program.dimensions) free(program.dimensions);
         if (program.members) free(program.members);
@@ -161,19 +215,19 @@ int dyn_compile_buffer(
         free(program.nodes);
         return DYN_COMPILE_OUT_OF_MEMORY;
     }
-    program.capacity = capacity;
-    program.local_capacity = capacity;
-    program.function_capacity = capacity;
-    program.global_capacity = capacity;
-    program.constant_capacity = capacity;
-    program.alias_capacity = capacity;
-    program.struct_capacity = capacity;
-    program.member_capacity = capacity;
-    program.dimension_capacity = capacity;
+    program.capacity = node_capacity;
+    program.local_capacity = symbol_capacity;
+    program.function_capacity = symbol_capacity;
+    program.global_capacity = symbol_capacity;
+    program.constant_capacity = symbol_capacity;
+    program.alias_capacity = symbol_capacity;
+    program.struct_capacity = symbol_capacity;
+    program.member_capacity = symbol_capacity;
+    program.dimension_capacity = symbol_capacity;
 
-    if (!dyn_parse(source, length, &program))
+    if (!dyn_parse(source, length, &program)) {
         status = DYN_COMPILE_PARSE_ERROR;
-    else if (!dyn_lower(&program, &module))
+    } else if (!dyn_lower(&program, &module))
         status = DYN_COMPILE_SEMANTIC_ERROR;
     else {
         dyn_optimize(&module);
@@ -213,17 +267,16 @@ int dyn_compile_project(
     unsigned int root_count;
     unsigned int definition_count;
     unsigned int index;
-    unsigned int unused_address;
-    unsigned int unused_length;
-    unsigned int source_length = 0;
+    unsigned int source_length;
     unsigned int source_count = 0;
-    unsigned int source_position = 0;
-    unsigned int files_position;
     unsigned int image_length = 0;
     unsigned int record_length;
     unsigned int image_capacity;
     char *source;
     char *image;
+    struct DynProjectFile *files = 0;
+    struct DynProjectText *roots = 0;
+    struct DynProjectText *definitions = 0;
     int status;
 
     dyn_output_length = 0;
@@ -237,67 +290,67 @@ int dyn_compile_project(
     file_count = dyn_project_u32(&reader);
     root_count = dyn_project_u32(&reader);
     definition_count = dyn_project_u32(&reader);
+    if (file_count) files = calloc(file_count, sizeof(struct DynProjectFile));
+    if (root_count) roots = calloc(root_count, sizeof(struct DynProjectText));
+    if (definition_count) definitions = calloc(
+        definition_count, sizeof(struct DynProjectText)
+    );
+    if ((file_count && !files) || (root_count && !roots)
+        || (definition_count && !definitions)) reader.error = 1;
     index = 0;
-    while (index < root_count + definition_count && !reader.error) {
-        dyn_project_skip_blob(&reader, &unused_address, &unused_length);
+    while (index < root_count && !reader.error) {
+        dyn_project_read_text(&reader, &roots[index]);
         index += 1u;
     }
-    files_position = reader.position;
+    index = 0;
+    while (index < definition_count && !reader.error) {
+        dyn_project_read_text(&reader, &definitions[index]);
+        index += 1u;
+    }
     index = 0;
     while (index < file_count && !reader.error) {
         unsigned int kind = dyn_project_u32(&reader);
-        unsigned int contents_address;
-        unsigned int contents_length;
-        dyn_project_skip_blob(&reader, &unused_address, &unused_length);
-        dyn_project_skip_blob(&reader, &contents_address, &contents_length);
-        if (kind == 1u) {
-            source_count += 1u;
-            if (contents_length >= 1048576u
-                || source_length > 1048576u - contents_length - 1u)
-                reader.error = 1;
-            else source_length += contents_length + 1u;
-        } else if (kind != 2u) reader.error = 1;
+        files[index].kind = kind;
+        if (kind != 1u && kind != 2u) reader.error = 1;
+        dyn_project_read_text(&reader, &files[index].path);
+        dyn_project_read_text(&reader, &files[index].contents);
+        if (kind == 1u) source_count += 1u;
         index += 1u;
     }
     if (
         reader.error || reader.position != reader.length || !source_count
     ) {
+        dyn_free_project_texts(
+            files, file_count, roots, root_count,
+            definitions, definition_count
+        );
         dyn_write_failure(output_address, output_capacity);
         return DYN_COMPILE_INVALID_PROJECT;
     }
-    source = malloc(source_length + 1u);
-    if (!source) {
+    if (!dyn_preprocess_project(
+        files, file_count, roots, root_count, definitions, definition_count,
+        &source, &source_length
+    )) {
+        dyn_free_project_texts(
+            files, file_count, roots, root_count,
+            definitions, definition_count
+        );
         dyn_write_failure(output_address, output_capacity);
-        return DYN_COMPILE_OUT_OF_MEMORY;
+        return DYN_COMPILE_PARSE_ERROR;
     }
-    image_capacity = source_length * 128u + 4096u;
+    image_capacity = source_length * 8u + 4096u;
     if (output_capacity > 4u && image_capacity > output_capacity - 4u)
         image_capacity = output_capacity - 4u;
     image = malloc(image_capacity);
     if (!image) {
         free(source);
+        dyn_free_project_texts(
+            files, file_count, roots, root_count,
+            definitions, definition_count
+        );
         dyn_write_failure(output_address, output_capacity);
         return DYN_COMPILE_OUT_OF_MEMORY;
     }
-    reader.position = files_position;
-    index = 0;
-    while (index < file_count && !reader.error) {
-        unsigned int kind = dyn_project_u32(&reader);
-        unsigned int contents_address;
-        unsigned int contents_length;
-        dyn_project_skip_blob(&reader, &unused_address, &unused_length);
-        dyn_project_skip_blob(&reader, &contents_address, &contents_length);
-        if (kind == 1u) {
-            dyn_copy_persistent(
-                source + source_position, contents_address, contents_length
-            );
-            source_position += contents_length;
-            source[source_position] = '\n';
-            source_position += 1u;
-        }
-        index += 1u;
-    }
-    source[source_length] = 0;
     status = dyn_compile_buffer(
         source, source_length, program_load_address, image,
         image_capacity, &image_length
@@ -319,5 +372,8 @@ int dyn_compile_project(
     } else dyn_write_failure(output_address, output_capacity);
     free(image);
     free(source);
+    dyn_free_project_texts(
+        files, file_count, roots, root_count, definitions, definition_count
+    );
     return status;
 }

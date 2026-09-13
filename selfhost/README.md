@@ -1,4 +1,4 @@
-# Dynphony compiler in C: stage 0.14
+# Dynphony compiler in C: self-hosting baseline
 
 This directory is the start of the self-hosting compiler. Its layout mirrors the
 Python implementation where that separation is already useful:

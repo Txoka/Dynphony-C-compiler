@@ -104,6 +104,16 @@ static int dyn_token_word(const struct DynParser *parser, const char *word) {
     return index == token->length;
 }
 
+static int dyn_token_call(struct DynParser *parser) {
+    struct DynLexer saved;
+    int call;
+    dyn_restore_lexer(&saved, &parser->lexer);
+    dyn_lexer_next(&parser->lexer);
+    call = parser->lexer.current.kind == DYN_TOK_LPAREN;
+    dyn_restore_lexer(&parser->lexer, &saved);
+    return call;
+}
+
 static unsigned int dyn_find_local_from(
     const struct DynParser *parser,
     unsigned int position,
@@ -114,7 +124,7 @@ static unsigned int dyn_find_local_from(
     if (index <= parser->local_base) return DYN_INVALID_NODE;
     index -= 1u;
     local = &parser->program->locals[index];
-    if (local->scope_depth <= parser->scope_depth && dyn_same_name(
+    if (local->active && local->scope_depth <= parser->scope_depth && dyn_same_name(
         parser, local->position, local->length, position, length
     )) return index;
     return dyn_find_local_from(parser, position, length, index);
@@ -283,6 +293,7 @@ static unsigned int dyn_add_local(
     local->total_size_node = DYN_INVALID_NODE;
     local->vla = 0;
     local->scope_depth = parser->scope_depth;
+    local->active = 1;
     if (parser->type_struct != DYN_INVALID_NODE && !pointer)
         parser->frame_size += (size + 3u) & 0xfffffffcu;
     else parser->frame_size += 4u;
@@ -418,7 +429,7 @@ static unsigned int dyn_primary(struct DynParser *parser) {
         unsigned int position = parser->lexer.current.position;
         unsigned int length = parser->lexer.current.length;
         unsigned int local;
-        if (dyn_token_word(parser, "input")) {
+        if (dyn_token_word(parser, "input") && dyn_token_call(parser)) {
             dyn_lexer_next(&parser->lexer);
             dyn_take(parser, DYN_TOK_LPAREN);
             dyn_take(parser, DYN_TOK_RPAREN);
@@ -427,7 +438,7 @@ static unsigned int dyn_primary(struct DynParser *parser) {
                 DYN_INVALID_NODE, DYN_INVALID_NODE
             );
         }
-        if (dyn_token_word(parser, "output")) {
+        if (dyn_token_word(parser, "output") && dyn_token_call(parser)) {
             dyn_lexer_next(&parser->lexer);
             dyn_take(parser, DYN_TOK_LPAREN);
             node = dyn_expression(parser);
@@ -437,13 +448,14 @@ static unsigned int dyn_primary(struct DynParser *parser) {
                 node, DYN_INVALID_NODE
             );
         }
-        if (dyn_token_word(parser, "keyboard")
+        if (dyn_token_call(parser) && (dyn_token_word(parser, "keyboard")
             || dyn_token_word(parser, "time")
             || dyn_token_word(parser, "time_low")
             || dyn_token_word(parser, "time_high")
             || dyn_token_word(parser, "screen")
             || dyn_token_word(parser, "persistent_load")
-            || dyn_token_word(parser, "persistent_store")) {
+            || dyn_token_word(parser, "persistent_store")
+            || dyn_token_word(parser, "dynphony_heap_remaining"))) {
             unsigned int intrinsic = 0;
             unsigned int first_argument = DYN_INVALID_NODE;
             unsigned int second_argument = DYN_INVALID_NODE;
@@ -453,7 +465,8 @@ static unsigned int dyn_primary(struct DynParser *parser) {
             else if (dyn_token_word(parser, "time_high")) intrinsic = 3u;
             else if (dyn_token_word(parser, "screen")) intrinsic = 4u;
             else if (dyn_token_word(parser, "persistent_load")) intrinsic = 5u;
-            else intrinsic = 6u;
+            else if (dyn_token_word(parser, "persistent_store")) intrinsic = 6u;
+            else intrinsic = 7u;
             dyn_lexer_next(&parser->lexer);
             dyn_take(parser, DYN_TOK_LPAREN);
             if (intrinsic >= 4u) {
@@ -1178,8 +1191,6 @@ static unsigned int dyn_expression(struct DynParser *parser) {
     return left;
 }
 
-static unsigned int dyn_statement(struct DynParser *parser);
-
 static unsigned int dyn_sequence(
     struct DynParser *parser,
     unsigned int left,
@@ -1366,6 +1377,15 @@ static unsigned int dyn_statement(struct DynParser *parser) {
             && !parser->error
         ) sequence = dyn_sequence(parser, sequence, dyn_statement(parser));
         dyn_take(parser, DYN_TOK_RBRACE);
+        {
+            unsigned int local = parser->local_base;
+            while (local < parser->program->local_count) {
+                if (parser->program->locals[local].scope_depth
+                    == parser->scope_depth)
+                    parser->program->locals[local].active = 0;
+                local += 1u;
+            }
+        }
         parser->scope_depth -= 1u;
         return sequence;
     }
@@ -1373,11 +1393,17 @@ static unsigned int dyn_statement(struct DynParser *parser) {
         return dyn_declaration(parser);
     if (parser->lexer.current.kind == DYN_TOK_RETURN) {
         dyn_lexer_next(&parser->lexer);
-        node = dyn_expression(parser);
+        if (parser->lexer.current.kind == DYN_TOK_SEMICOLON)
+            node = dyn_new_node(
+                parser, DYN_NODE_NUMBER, 0u,
+                DYN_INVALID_NODE, DYN_INVALID_NODE
+            );
+        else node = dyn_expression(parser);
         dyn_take(parser, DYN_TOK_SEMICOLON);
-        return dyn_new_node(
+        node = dyn_new_node(
             parser, DYN_NODE_RETURN, 0, node, DYN_INVALID_NODE
         );
+        return node;
     }
     if (parser->lexer.current.kind == DYN_TOK_IF) {
         unsigned int condition;
@@ -1945,8 +1971,13 @@ int dyn_parse(
         parser.frame_size = 0;
         parser.scope_depth = 0;
         if (parser.lexer.current.kind == DYN_TOK_VOID) {
+            struct DynLexer saved;
+            dyn_restore_lexer(&saved, &parser.lexer);
             dyn_lexer_next(&parser.lexer);
-        } else while (
+            if (parser.lexer.current.kind != DYN_TOK_RPAREN)
+                dyn_restore_lexer(&parser.lexer, &saved);
+        }
+        while (
             parser.lexer.current.kind != DYN_TOK_RPAREN && !parser.error
         ) {
             unsigned int parameter_size = dyn_scalar_type(&parser);
@@ -2013,12 +2044,14 @@ int dyn_parse(
         function->local_base = local_base;
         function->parameter_count = parameter_count;
         function->body = DYN_INVALID_NODE;
+        function->defined = 0;
         if (parser.lexer.current.kind == DYN_TOK_SEMICOLON) {
             dyn_lexer_next(&parser.lexer);
             program->local_count = local_base;
             function->local_count = 0;
         } else {
             function->body = dyn_statement(&parser);
+            function->defined = 1;
             function->local_count = program->local_count - local_base;
             function->frame_size = parser.frame_size;
             if (dyn_same_name(
@@ -2044,7 +2077,7 @@ int dyn_parse(
                 struct DynFunction *function;
                 candidate -= 1u;
                 function = &program->functions[candidate];
-                if (function->body != DYN_INVALID_NODE && dyn_same_name(
+                if (function->defined && dyn_same_name(
                     &parser,
                     node->value,
                     node->extra,
@@ -2095,6 +2128,8 @@ int dyn_parse(
         }
         index += 1u;
     }
+    program->error_position = parser.error
+        ? parser.lexer.current.position : DYN_INVALID_NODE;
     if (!parser.error)
         program->expression = program->functions[program->main_function].body;
     return parser.error ? 0 : 1;

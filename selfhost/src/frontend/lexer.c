@@ -1,6 +1,6 @@
 #include "dynphony/frontend.h"
 
-static int dyn_space(char value) {
+static int dyn_lexer_space(char value) {
     return value == ' ' || value == '\t' || value == '\r' || value == '\n';
 }
 
@@ -31,19 +31,19 @@ static int dyn_identifier_part(char value) {
     return dyn_identifier_start(value) || dyn_digit(value);
 }
 
-static int dyn_word(
+static unsigned int dyn_keyword_key(
     const struct DynLexer *lexer,
     unsigned int start,
-    unsigned int length,
-    const char *word
+    unsigned int length
 ) {
     unsigned int index = 0;
-    while (word[index]) {
-        if (index == length || lexer->source[start + index] != word[index])
-            return 0;
-        index += 1;
+    unsigned int key = 5381u;
+    while (index < length) {
+        key = (key << 5u) + key
+            + (unsigned int)lexer->source[start + index];
+        index += 1u;
     }
-    return index == length;
+    return key;
 }
 
 static void dyn_token(
@@ -63,29 +63,30 @@ static int dyn_keyword(
     unsigned int start,
     unsigned int length
 ) {
-    if (dyn_word(lexer, start, length, "int")) return DYN_TOK_INT;
-    if (dyn_word(lexer, start, length, "void")) return DYN_TOK_VOID;
-    if (dyn_word(lexer, start, length, "main")) return DYN_TOK_MAIN;
-    if (dyn_word(lexer, start, length, "return")) return DYN_TOK_RETURN;
-    if (dyn_word(lexer, start, length, "unsigned")) return DYN_TOK_UNSIGNED;
-    if (dyn_word(lexer, start, length, "signed")) return DYN_TOK_SIGNED;
-    if (dyn_word(lexer, start, length, "char")) return DYN_TOK_CHAR_TYPE;
-    if (dyn_word(lexer, start, length, "short")) return DYN_TOK_SHORT;
-    if (dyn_word(lexer, start, length, "long")) return DYN_TOK_LONG;
-    if (dyn_word(lexer, start, length, "struct")) return DYN_TOK_STRUCT;
-    if (dyn_word(lexer, start, length, "enum")) return DYN_TOK_ENUM;
-    if (dyn_word(lexer, start, length, "typedef")) return DYN_TOK_TYPEDEF;
-    if (dyn_word(lexer, start, length, "static")) return DYN_TOK_STATIC;
-    if (dyn_word(lexer, start, length, "extern")) return DYN_TOK_EXTERN;
-    if (dyn_word(lexer, start, length, "const")) return DYN_TOK_CONST;
-    if (dyn_word(lexer, start, length, "sizeof")) return DYN_TOK_SIZEOF;
-    if (dyn_word(lexer, start, length, "if")) return DYN_TOK_IF;
-    if (dyn_word(lexer, start, length, "else")) return DYN_TOK_ELSE;
-    if (dyn_word(lexer, start, length, "while")) return DYN_TOK_WHILE;
-    if (dyn_word(lexer, start, length, "do")) return DYN_TOK_DO;
-    if (dyn_word(lexer, start, length, "for")) return DYN_TOK_FOR;
-    if (dyn_word(lexer, start, length, "break")) return DYN_TOK_BREAK;
-    if (dyn_word(lexer, start, length, "continue")) return DYN_TOK_CONTINUE;
+    unsigned int key = dyn_keyword_key(lexer, start, length);
+    if (key == 0x0b888030u) return DYN_TOK_INT;
+    if (key == 0x7c9faa57u) return DYN_TOK_VOID;
+    if (key == 0x7c9a7f6au) return DYN_TOK_MAIN;
+    if (key == 0x19306425u) return DYN_TOK_RETURN;
+    if (key == 0x9d375962u) return DYN_TOK_UNSIGNED;
+    if (key == 0x1bc6ae5fu) return DYN_TOK_SIGNED;
+    if (key == 0x7c952063u) return DYN_TOK_CHAR_TYPE;
+    if (key == 0x105af0d5u) return DYN_TOK_SHORT;
+    if (key == 0x7c9a2f35u) return DYN_TOK_LONG;
+    if (key == 0x1c93e1aau) return DYN_TOK_STRUCT;
+    if (key == 0x7c96553au) return DYN_TOK_ENUM;
+    if (key == 0x07872a76u) return DYN_TOK_TYPEDEF;
+    if (key == 0x1c8a8badu) return DYN_TOK_STATIC;
+    if (key == 0xfc34e17bu) return DYN_TOK_EXTERN;
+    if (key == 0x0f3d3b4cu) return DYN_TOK_CONST;
+    if (key == 0x1bd0f495u) return DYN_TOK_SIZEOF;
+    if (key == 0x00597834u) return DYN_TOK_IF;
+    if (key == 0x7c964c6eu) return DYN_TOK_ELSE;
+    if (key == 0x10a3387eu) return DYN_TOK_WHILE;
+    if (key == 0x00597798u) return DYN_TOK_DO;
+    if (key == 0x0b88738cu) return DYN_TOK_FOR;
+    if (key == 0x0f2c9f4au) return DYN_TOK_BREAK;
+    if (key == 0x42aefb8au) return DYN_TOK_CONTINUE;
     return DYN_TOK_IDENTIFIER;
 }
 
@@ -107,7 +108,7 @@ static void dyn_skip(struct DynLexer *lexer) {
         again = 0;
         while (
             lexer->position < lexer->length
-            && dyn_space(lexer->source[lexer->position])
+            && dyn_lexer_space(lexer->source[lexer->position])
         ) lexer->position += 1;
         if (
             lexer->position + 1 < lexer->length

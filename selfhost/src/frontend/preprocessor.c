@@ -1,0 +1,434 @@
+#include <stdlib.h>
+#include "dynphony/preprocessor.h"
+
+enum { DYN_PP_MAX_DEPTH = 64u };
+
+struct DynMacro {
+    struct DynProjectText name;
+    struct DynProjectText replacement;
+};
+
+struct DynPreprocessor {
+    const struct DynProjectFile *files;
+    unsigned int file_count;
+    const struct DynProjectText *roots;
+    unsigned int root_count;
+    struct DynMacro *macros;
+    unsigned int macro_count;
+    unsigned int macro_capacity;
+    char *output;
+    unsigned int length;
+    unsigned int capacity;
+    int error;
+};
+
+static int dyn_preprocessor_space(char value) {
+    return value == ' ' || value == '\t' || value == '\r';
+}
+
+static int dyn_name_char(char value) {
+    return (value >= 'a' && value <= 'z')
+        || (value >= 'A' && value <= 'Z')
+        || (value >= '0' && value <= '9') || value == '_';
+}
+
+static int dyn_text_equal(
+    const char *left, unsigned int left_length,
+    const char *right, unsigned int right_length
+) {
+    unsigned int index = 0;
+    if (left_length != right_length) return 0;
+    while (index < left_length) {
+        if (left[index] != right[index]) return 0;
+        index += 1u;
+    }
+    return 1;
+}
+
+static int dyn_word(
+    const char *text, unsigned int length, const char *word,
+    unsigned int word_length
+) {
+    return dyn_text_equal(text, length, word, word_length);
+}
+
+static unsigned int dyn_find_macro(
+    const struct DynPreprocessor *preprocessor,
+    const char *name, unsigned int length
+) {
+    unsigned int index = 0;
+    while (index < preprocessor->macro_count) {
+        if (dyn_text_equal(
+            name, length, preprocessor->macros[index].name.data,
+            preprocessor->macros[index].name.length
+        )) return index;
+        index += 1u;
+    }
+    return 0xffffffffu;
+}
+
+static int dyn_macro_defined(
+    const struct DynPreprocessor *preprocessor,
+    const char *name, unsigned int length
+) {
+    return dyn_find_macro(preprocessor, name, length) != 0xffffffffu;
+}
+
+static void dyn_define(
+    struct DynPreprocessor *preprocessor,
+    const char *name, unsigned int length,
+    const char *replacement, unsigned int replacement_length
+) {
+    if (!length || dyn_macro_defined(preprocessor, name, length)) return;
+    if (preprocessor->macro_count >= preprocessor->macro_capacity) {
+        preprocessor->error = 1;
+        return;
+    }
+    preprocessor->macros[preprocessor->macro_count].name.data = (char *)name;
+    preprocessor->macros[preprocessor->macro_count].name.length = length;
+    preprocessor->macros[preprocessor->macro_count].replacement.data =
+        (char *)replacement;
+    preprocessor->macros[preprocessor->macro_count].replacement.length =
+        replacement_length;
+    preprocessor->macro_count += 1u;
+}
+
+static void dyn_append(
+    struct DynPreprocessor *preprocessor,
+    const char *text, unsigned int length
+) {
+    unsigned int index = 0;
+    if (length > preprocessor->capacity - preprocessor->length) {
+        preprocessor->error = 1;
+        return;
+    }
+    while (index < length) {
+        preprocessor->output[preprocessor->length] = text[index];
+        preprocessor->length += 1u;
+        index += 1u;
+    }
+}
+
+static void dyn_expand_line(
+    struct DynPreprocessor *preprocessor,
+    const char *source,
+    unsigned int start,
+    unsigned int end
+) {
+    unsigned int position = start;
+    char quoted = 0;
+    while (position < end && !preprocessor->error) {
+        if (quoted) {
+            char value = source[position];
+            dyn_append(preprocessor, source + position, 1u);
+            position += 1u;
+            if (value == '\\' && position < end) {
+                dyn_append(preprocessor, source + position, 1u);
+                position += 1u;
+            } else if (value == quoted) quoted = 0;
+        } else if (source[position] == '"' || source[position] == '\'') {
+            quoted = source[position];
+            dyn_append(preprocessor, source + position, 1u);
+            position += 1u;
+        } else if ((source[position] >= 'a' && source[position] <= 'z')
+            || (source[position] >= 'A' && source[position] <= 'Z')
+            || source[position] == '_') {
+            unsigned int name_start = position;
+            unsigned int macro;
+            while (position < end && dyn_name_char(source[position]))
+                position += 1u;
+            macro = dyn_find_macro(
+                preprocessor, source + name_start, position - name_start
+            );
+            if (macro == 0xffffffffu)
+                dyn_append(
+                    preprocessor, source + name_start, position - name_start
+                );
+            else dyn_append(
+                preprocessor, preprocessor->macros[macro].replacement.data,
+                preprocessor->macros[macro].replacement.length
+            );
+        } else {
+            dyn_append(preprocessor, source + position, 1u);
+            position += 1u;
+        }
+    }
+}
+
+static int dyn_path_matches(
+    const struct DynProjectText *path,
+    const char *prefix, unsigned int prefix_length,
+    const char *name, unsigned int name_length
+) {
+    unsigned int index = 0;
+    if (path->length != prefix_length + name_length) return 0;
+    while (index < prefix_length) {
+        if (path->data[index] != prefix[index]) return 0;
+        index += 1u;
+    }
+    index = 0;
+    while (index < name_length) {
+        if (path->data[prefix_length + index] != name[index]) return 0;
+        index += 1u;
+    }
+    return 1;
+}
+
+static unsigned int dyn_find_include(
+    const struct DynPreprocessor *preprocessor,
+    unsigned int current_file,
+    const char *name,
+    unsigned int name_length,
+    int quoted
+) {
+    unsigned int file;
+    if (quoted) {
+        const struct DynProjectText *path =
+            &preprocessor->files[current_file].path;
+        unsigned int prefix_length = path->length;
+        while (prefix_length && path->data[prefix_length - 1u] != '/')
+            prefix_length -= 1u;
+        file = 0;
+        while (file < preprocessor->file_count) {
+            if (dyn_path_matches(
+                &preprocessor->files[file].path,
+                path->data, prefix_length, name, name_length
+            )) return file;
+            file += 1u;
+        }
+    }
+    {
+        unsigned int root = 0;
+        while (root < preprocessor->root_count) {
+            const struct DynProjectText *prefix = &preprocessor->roots[root];
+            file = 0;
+            while (file < preprocessor->file_count) {
+                const struct DynProjectText *path =
+                    &preprocessor->files[file].path;
+                if (path->length == prefix->length + 1u + name_length
+                    && dyn_text_equal(
+                        path->data, prefix->length,
+                        prefix->data, prefix->length
+                    ) && path->data[prefix->length] == '/') {
+                    unsigned int offset = prefix->length + 1u;
+                    if (dyn_text_equal(
+                        path->data + offset, name_length, name, name_length
+                    )) return file;
+                }
+                file += 1u;
+            }
+            root += 1u;
+        }
+    }
+    file = 0;
+    while (file < preprocessor->file_count) {
+        if (dyn_path_matches(
+            &preprocessor->files[file].path, "", 0u, name, name_length
+        )) return file;
+        file += 1u;
+    }
+    return 0xffffffffu;
+}
+
+static void dyn_process_file(
+    struct DynPreprocessor *preprocessor,
+    unsigned int file,
+    unsigned int depth
+) {
+    const char *source;
+    unsigned int source_length;
+    unsigned int position = 0;
+    int active = 1;
+    int parent[DYN_PP_MAX_DEPTH];
+    int taken[DYN_PP_MAX_DEPTH];
+    unsigned int conditional_depth = 0;
+    if (depth >= DYN_PP_MAX_DEPTH || file >= preprocessor->file_count) {
+        preprocessor->error = 1;
+        return;
+    }
+    source = preprocessor->files[file].contents.data;
+    source_length = preprocessor->files[file].contents.length;
+    while (position < source_length && !preprocessor->error) {
+        unsigned int line_start = position;
+        unsigned int line_end;
+        unsigned int cursor;
+        while (position < source_length && source[position] != '\n')
+            position += 1u;
+        line_end = position;
+        if (position < source_length) position += 1u;
+        cursor = line_start;
+        while (cursor < line_end && dyn_preprocessor_space(source[cursor])) cursor += 1u;
+        if (cursor < line_end && source[cursor] == '#') {
+            unsigned int directive_start;
+            unsigned int directive_length;
+            unsigned int argument_start;
+            cursor += 1u;
+            while (cursor < line_end && dyn_preprocessor_space(source[cursor])) cursor += 1u;
+            directive_start = cursor;
+            while (cursor < line_end && dyn_name_char(source[cursor]))
+                cursor += 1u;
+            directive_length = cursor - directive_start;
+            while (cursor < line_end && dyn_preprocessor_space(source[cursor])) cursor += 1u;
+            argument_start = cursor;
+            if (dyn_word(
+                source + directive_start, directive_length, "ifndef", 6u
+            ) || dyn_word(
+                source + directive_start, directive_length, "ifdef", 5u
+            )) {
+                int condition;
+                unsigned int argument_length = line_end - argument_start;
+                if (conditional_depth >= DYN_PP_MAX_DEPTH) {
+                    preprocessor->error = 1;
+                    return;
+                }
+                parent[conditional_depth] = active;
+                condition = dyn_macro_defined(
+                    preprocessor, source + argument_start, argument_length
+                );
+                if (directive_length == 6u) condition = !condition;
+                taken[conditional_depth] = condition;
+                conditional_depth += 1u;
+                active = active && condition;
+            } else if (dyn_word(
+                source + directive_start, directive_length, "else", 4u
+            )) {
+                if (!conditional_depth) preprocessor->error = 1;
+                else {
+                    unsigned int state = conditional_depth - 1u;
+                    active = parent[state] && !taken[state];
+                    taken[state] = 1;
+                }
+            } else if (dyn_word(
+                source + directive_start, directive_length, "endif", 5u
+            )) {
+                if (!conditional_depth) preprocessor->error = 1;
+                else {
+                    conditional_depth -= 1u;
+                    active = parent[conditional_depth];
+                }
+            } else if (active && dyn_word(
+                source + directive_start, directive_length, "define", 6u
+            )) {
+                unsigned int name_end = argument_start;
+                unsigned int replacement_start;
+                while (name_end < line_end && dyn_name_char(source[name_end]))
+                    name_end += 1u;
+                replacement_start = name_end;
+                while (replacement_start < line_end
+                    && dyn_preprocessor_space(source[replacement_start]))
+                    replacement_start += 1u;
+                dyn_define(
+                    preprocessor, source + argument_start,
+                    name_end - argument_start,
+                    source + replacement_start, line_end - replacement_start
+                );
+            } else if (active && dyn_word(
+                source + directive_start, directive_length, "include", 7u
+            )) {
+                char opening;
+                char closing;
+                unsigned int name_start;
+                unsigned int name_end;
+                unsigned int included;
+                if (argument_start >= line_end) {
+                    preprocessor->error = 1;
+                    return;
+                }
+                opening = source[argument_start];
+                closing = opening == '"' ? '"' : '>';
+                if (opening != '"' && opening != '<') {
+                    preprocessor->error = 1;
+                    return;
+                }
+                name_start = argument_start + 1u;
+                name_end = name_start;
+                while (name_end < line_end && source[name_end] != closing)
+                    name_end += 1u;
+                if (name_end >= line_end) {
+                    preprocessor->error = 1;
+                    return;
+                }
+                included = dyn_find_include(
+                    preprocessor, file, source + name_start,
+                    name_end - name_start, opening == '"'
+                );
+                if (included == 0xffffffffu) preprocessor->error = 1;
+                else dyn_process_file(preprocessor, included, depth + 1u);
+            } else if (active) preprocessor->error = 1;
+            dyn_append(preprocessor, "\n", 1u);
+        } else if (active) {
+            dyn_expand_line(preprocessor, source, line_start, line_end);
+            dyn_append(preprocessor, "\n", 1u);
+        }
+    }
+    if (conditional_depth) preprocessor->error = 1;
+}
+
+int dyn_preprocess_project(
+    const struct DynProjectFile *files,
+    unsigned int file_count,
+    const struct DynProjectText *include_roots,
+    unsigned int include_root_count,
+    const struct DynProjectText *definitions,
+    unsigned int definition_count,
+    char **output,
+    unsigned int *output_length
+) {
+    struct DynPreprocessor preprocessor;
+    unsigned int capacity = 4096u;
+    unsigned int index = 0;
+    while (index < file_count) {
+        if (files[index].contents.length > 1048576u
+            || capacity > 1048576u - files[index].contents.length)
+            return 0;
+        capacity += files[index].contents.length;
+        index += 1u;
+    }
+    preprocessor.files = files;
+    preprocessor.file_count = file_count;
+    preprocessor.roots = include_roots;
+    preprocessor.root_count = include_root_count;
+    preprocessor.macro_capacity = file_count * 4u + definition_count + 16u;
+    preprocessor.macros = malloc(
+        preprocessor.macro_capacity * sizeof(struct DynMacro)
+    );
+    preprocessor.macro_count = 0u;
+    preprocessor.output = malloc(capacity + 1u);
+    preprocessor.length = 0u;
+    preprocessor.capacity = capacity;
+    preprocessor.error = !preprocessor.macros || !preprocessor.output;
+    index = 0;
+    while (index < definition_count && !preprocessor.error) {
+        unsigned int length = 0;
+        while (length < definitions[index].length
+            && dyn_name_char(definitions[index].data[length])) length += 1u;
+        {
+            unsigned int replacement_start = length;
+            if (replacement_start < definitions[index].length
+                && definitions[index].data[replacement_start] == '=')
+                replacement_start += 1u;
+            dyn_define(
+                &preprocessor, definitions[index].data, length,
+                definitions[index].data + replacement_start,
+                definitions[index].length - replacement_start
+            );
+        }
+        index += 1u;
+    }
+    index = 0;
+    while (index < file_count && !preprocessor.error) {
+        if (files[index].kind == 1u)
+            dyn_process_file(&preprocessor, index, 0u);
+        index += 1u;
+    }
+    if (preprocessor.error) {
+        if (preprocessor.output) free(preprocessor.output);
+        free(preprocessor.macros);
+        return 0;
+    }
+    preprocessor.output[preprocessor.length] = 0;
+    free(preprocessor.macros);
+    *output = preprocessor.output;
+    *output_length = preprocessor.length;
+    return 1;
+}

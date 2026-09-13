@@ -29,7 +29,15 @@ jobs:
           cp experimental/gcc-16-dynphony/gcc/config/dynphony/dynphony.cc /tmp/gcc-16.2.0/gcc/config/moxie/moxie.cc
           cp experimental/gcc-16-dynphony/gcc/config/dynphony/dynphony.h /tmp/gcc-16.2.0/gcc/config/moxie/moxie.h
           cp experimental/gcc-16-dynphony/gcc/config/dynphony/dynphony-protos.h /tmp/gcc-16.2.0/gcc/config/moxie/moxie-protos.h
+          cp experimental/gcc-16-dynphony/gcc/config/dynphony/dynphony-protos.h /tmp/gcc-16.2.0/gcc/config/moxie/dynphony-protos.h
           cp experimental/gcc-16-dynphony/gcc/config/dynphony/dynphony.opt /tmp/gcc-16.2.0/gcc/config/moxie/moxie.opt
+
+      - name: Verify injected backend sources
+        run: |
+          grep -q 'Dynphony GCC machine description' /tmp/gcc-16.2.0/gcc/config/moxie/moxie.md
+          grep -q 'GCC Dynphony target' /tmp/gcc-16.2.0/gcc/config/moxie/moxie.h
+          grep -q 'dynphony_expand_prologue' /tmp/gcc-16.2.0/gcc/config/moxie/moxie.cc
+          echo 'Dynphony backend sources are installed over the bootstrap tuple.'
 
       - name: Configure C-only cross compiler
         run: |
@@ -37,14 +45,10 @@ jobs:
           cd /tmp/gcc-build
           /tmp/gcc-16.2.0/configure --target=moxie-unknown-elf --enable-languages=c --without-headers --disable-shared --disable-threads --disable-libssp --disable-libquadmath --disable-libatomic --disable-libstdcxx
 
-      - name: Verify selected backend
-        run: |
-          grep "md_file='moxie/moxie.md'" /tmp/gcc-build/gcc/config.log
-          grep -q 'Dynphony GCC machine description' /tmp/gcc-16.2.0/gcc/config/moxie/moxie.md
-          grep -q 'GCC Dynphony target' /tmp/gcc-16.2.0/gcc/config/moxie/moxie.h
-
       - name: Build GCC
-        run: make -C /tmp/gcc-build -j2 all-gcc
+        run: |
+          set -o pipefail
+          make -C /tmp/gcc-build -j2 all-gcc 2>&1 | tee /tmp/gcc-build.log
 
       - name: Compile Towers of Hanoi
         run: |
@@ -76,6 +80,10 @@ jobs:
           EOF
           /tmp/gcc-build/gcc/xgcc -B/tmp/gcc-build/gcc/ -S -O2 -ffreestanding -fno-builtin /tmp/towers.c -o /tmp/towers.s
           cat /tmp/towers.s
+          if grep -Eq '\b(ldi\.l|jsr|sto\.l|push[[:space:]]+\$)' /tmp/towers.s; then
+            echo 'ERROR: output still contains Moxie mnemonics' >&2
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -83,4 +91,5 @@ jobs:
           name: gcc-dynphony-smoke
           path: |
             /tmp/towers.s
-            /tmp/gcc-build/gcc/config.log
+            /tmp/gcc-build.log
+            /tmp/gcc-build/config.log

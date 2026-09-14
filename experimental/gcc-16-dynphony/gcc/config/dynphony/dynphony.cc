@@ -28,15 +28,10 @@
 /* ABI v1 deliberately mirrors dyncc while the GCC port is validated. */
 static const unsigned dynphony_arg_regs[] = { 1, 2, 3, 4, 5, 6 };
 
-struct GTY(()) dynphony_args
-{
-  unsigned int words;
-};
-
 static rtx
 dynphony_function_arg (cumulative_args_t cum_v, const function_arg_info &arg)
 {
-  dynphony_args *cum = (dynphony_args *) cum_v;
+  CUMULATIVE_ARGS *cum = (CUMULATIVE_ARGS *) cum_v;
   unsigned words = (arg.mode == BLKmode
                     ? (int_size_in_bytes (arg.type) + 3) / 4
                     : (GET_MODE_SIZE (arg.mode).to_constant () + 3) / 4);
@@ -49,7 +44,7 @@ static void
 dynphony_function_arg_advance (cumulative_args_t cum_v,
                                const function_arg_info &arg)
 {
-  dynphony_args *cum = (dynphony_args *) cum_v;
+  CUMULATIVE_ARGS *cum = (CUMULATIVE_ARGS *) cum_v;
   unsigned words = (arg.mode == BLKmode
                     ? (int_size_in_bytes (arg.type) + 3) / 4
                     : (GET_MODE_SIZE (arg.mode).to_constant () + 3) / 4);

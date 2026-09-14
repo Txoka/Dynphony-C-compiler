@@ -18,7 +18,15 @@ include = ["symphony*"]
 
 [tool.cibuildwheel]
 build = "cp3{10,11,12,13,14,15}-*"
-test-command = "python -c \"from symphony import Target, compile_source; from symphony.emulator import Machine, native_available, native_run; [(native_available(s) or exit(1), r := compile_source('int main(void){return 6*7;}', target=Target(isa=i)), native_run(Machine(r.image.binary, symphony=s), r.image.symbols['_halt']) == 42 or exit(1)) for i, s in (('symphony', True), ('dynphony', False))]\""
+test-sources = ["tests", "selfhost"]
+test-command = [
+    "python -c \"from symphony.emulator import native_available; exit(0 if all(native_available(s) for s in (False, True)) else 1)\"",
+    "python -m unittest discover -s tests -v",
+    "python -m unittest discover -s selfhost/tests -v",
+]
+
+[tool.cibuildwheel.environment]
+SYMPHONY_TEST_ISA = "symphony"
 
 [tool.cibuildwheel.macos]
 archs = ["x86_64", "arm64", "universal2"]

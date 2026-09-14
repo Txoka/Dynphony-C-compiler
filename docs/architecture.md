@@ -14,7 +14,7 @@ semantics. They differ only in how much space an instruction occupies:
   encoding needs; shorter instructions are followed by padding that is never
   executed.
 - **Dynphony** is the variable-length version of Symphony. An instruction
-  occupies only the bytes it encodes — two to four — and the next instruction
+  occupies only the bytes it encodes — one to four — and the next instruction
   begins immediately after.
 
 The same program bytes mean the same thing in both; only the address of the
@@ -40,7 +40,7 @@ rather than hard-coding `r15`.
 
 ## Instruction format
 
-Instructions are 2 to 4 bytes. Symphony pads every instruction to a fixed four
+Instructions are 1 to 4 bytes. Symphony pads every instruction to a fixed four
 bytes; Dynphony packs them at their natural length. Immediates are 16-bit,
 big-endian, and zero-extended to 32 bits.
 
@@ -160,13 +160,13 @@ of known mnemonics.
 
 ## Program counter
 
-Dynphony advances the PC by the instruction's own length, 2 to 4 bytes — this
+Dynphony advances the PC by the instruction's own length, 1 to 4 bytes — this
 variable advance is what distinguishes it from Symphony, which advances by a
 fixed 4 bytes regardless of length, leaving any trailing bytes as padding that
 is not executed.
 
-A Dynphony instruction's length follows from its opcode: I/O operations carry
-their own lengths, and every ALU, jump and memory instruction is 3 bytes in its
+A Dynphony instruction's length follows from its opcode: `nop` is one byte,
+other I/O operations carry their own lengths, and every ALU, jump and memory instruction is 3 bytes in its
 register form and 4 in its immediate form, as selected by opcode bit 4.
 
 There is no halt instruction. A program stops by jumping to itself, which

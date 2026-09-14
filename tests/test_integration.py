@@ -158,7 +158,6 @@ class CompilerIntegrationTests(unittest.TestCase):
                     "pc",
                     "steps",
                     "regs",
-                    "comparison",
                     "outputs",
                     "screen_updates",
                     "memory",

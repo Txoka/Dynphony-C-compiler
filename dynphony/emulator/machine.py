@@ -1,8 +1,8 @@
 """Small independent byte decoder for the instruction subset emitted by dyncc.
 
-Comparison flags use an internal model; their hardware bit layout is not specified
-by the supplied ISA. Generated code only uses named conditional branches, never
-reads flag bits. This is a reference test runner, not a cycle-accurate CPU model.
+Comparisons use an internal relation model because the full hardware flag layout
+is not specified. When no comparison is pending, ``je`` and ``jne`` interpret the
+documented low status bit directly so fallible ABI calls can branch on return.
 """
 
 from collections import deque
@@ -168,23 +168,27 @@ class Machine:
                 take = True
             else:
                 if self.comparison is None:
-                    raise RuntimeError("conditional branch without comparison")
-                a, b = self.comparison
-                conditions = {
-                    0x41: a == b,
-                    0x49: a != b,
-                    0x42: a < b,
-                    0x4A: a >= b,
-                    0x43: a <= b,
-                    0x4B: a > b,
-                    0x44: signed(a) < signed(b),
-                    0x4C: signed(a) >= signed(b),
-                    0x45: signed(a) <= signed(b),
-                    0x4D: signed(a) > signed(b),
-                }
-                if base not in conditions:
-                    raise RuntimeError(f"unknown branch {op:#x}")
-                take = conditions[base]
+                    if base not in (0x41, 0x49):
+                        raise RuntimeError("conditional branch without comparison")
+                    error = bool(r[15] & 1)
+                    take = error if base == 0x41 else not error
+                else:
+                    a, b = self.comparison
+                    conditions = {
+                        0x41: a == b,
+                        0x49: a != b,
+                        0x42: a < b,
+                        0x4A: a >= b,
+                        0x43: a <= b,
+                        0x4B: a > b,
+                        0x44: signed(a) < signed(b),
+                        0x4C: signed(a) >= signed(b),
+                        0x45: signed(a) <= signed(b),
+                        0x4D: signed(a) > signed(b),
+                    }
+                    if base not in conditions:
+                        raise RuntimeError(f"unknown branch {op:#x}")
+                    take = conditions[base]
             if take:
                 next_pc = target
         elif 0x60 <= op <= 0x77:

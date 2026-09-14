@@ -153,6 +153,22 @@ def ret():
     return pop(Register.FLAGS) + jump("jmp", Register.FLAGS)
 
 
+def link_call(target, immediate=False, *, return_offset=None):
+    """Call using r13 as a link register, without touching the stack or flags."""
+    if return_offset is None:
+        return_offset = 10 if immediate else 9
+    return (
+        counter(Register.R13)
+        + alu("add", Register.R13, Register.R13, return_offset, True)
+        + jump("jmp", target, immediate)
+    )
+
+
+def link_return():
+    """Return through the Symphony ABI link register."""
+    return jump("jmp", Register.R13)
+
+
 def constant(r, value):
     value &= 0xFFFFFFFF
     # Always 12 bytes: keeps label and address fixups independent of layout.

@@ -30,25 +30,49 @@ New analyses belong under `middle/analysis`; new transformations belong under
 
 ## Stack frame and calls
 
-At entry to a generated function, the caller's return address is at `[sp]`. A function that needs a frame pushes the old `r12`, copies `sp` into `r12`, and allocates its aligned local/temporary area below it:
+At entry to a generated function, `r13` contains the caller's continuation and
+`sp` points at argument eight when stack arguments exist. A non-leaf function
+saves `r13` once. A function that needs a frame saves any allocated callee-saved
+registers, pushes the old `r11`, copies `sp` into `r11`, and allocates its aligned
+local/temporary area below it:
 
 ```text
 higher addresses
-  return address          [r12 + 4]
-  caller's frame pointer  [r12]
-  local objects           [r12 - local_offset]
-  virtual-value slots     [r12 - temp_base - 4*(value_id+1)]
+  stack arguments         [positive offsets from r11]
+  saved r13 (non-leaf)    [positive offset from r11]
+  saved value registers   [positive offsets from r11]
+  caller's frame pointer  [r11]
+  local objects           [r11 - local_offset]
+  virtual-value slots     [r11 - temp_base - 4*(value_id+1)]
   current sp
 lower addresses
 ```
 
-Constants and addresses are rematerialized. The local allocator keeps values for a straight-line leaf function in caller-saved registers and coalesces promoted parameters with their incoming `r1`–`r6` locations. Functions with control flow assign up to four frequently used values to `r8`–`r11` and save only the registers selected for that function. Other live values are backed by memory, so nested calls and loop backedges remain safe. Parameters that are assigned or whose addresses escape remain addressable stack objects. Arguments seven onward are pushed right-to-left; after the callee saves its frame pointer and selected callee-saved registers, it loads those arguments from positive frame-pointer offsets. The caller discards them after return. Indirect call targets are preserved before argument placement. The register call sequence is exactly the supplied pseudo-instruction: `counter flags`, add 16, push flags, and jump to the target register. A frame-using function restores `sp` and `r12` before the ISA's `ret` expansion. A frame-free function goes directly to `ret`.
+Constants and addresses are rematerialized. The local allocator keeps values for
+a straight-line leaf function in caller-saved registers and coalesces promoted
+parameters with their incoming `r1`–`r7` locations. Functions with control flow
+assign frequently used values to available callee-saved registers and save only
+the registers selected for that function. Other live values are backed by
+memory, so nested calls and loop backedges remain safe. Parameters that are
+assigned or whose addresses escape remain addressable stack objects. Arguments
+eight onward are pushed right-to-left; the callee loads them from positive
+frame-pointer offsets and the caller discards them after return. The backend
+stages incoming argument seven before using `r7` as address scratch. Indirect and
+PIC call targets use caller-clobbered `flags`, leaving every argument register
+intact. A call obtains its continuation with `counter r13`, adjusts it past the
+jump sequence, and jumps to the target. A leaf returns with `jmp r13`; a non-leaf
+restores its saved link first.
 
-The backend uses `r1` and `r2` for arithmetic and `r7` for addresses. Allocated values may reside in `r8`–`r11`; `r12` is the frame pointer and `r13` holds the PIC base. Every modified callee-saved register is preserved. Materializing a jump address never modifies flags, so nothing between a comparison and its consuming conditional jump invalidates that comparison.
+The backend uses `r1` and `r2` for arithmetic and `r7` for addresses. `r11` is
+the optional frame pointer and `r13` is the link register. Fixed-address builds
+may allocate `r12`; PIC builds reserve it as the image base and preserve it.
+Every modified value register in `r8`–`r12` is preserved. Fallible ABI calls may
+return an odd error code in `flags` (zero means success), while other calls
+clobber it.
 
 Values proven not to cross a call may also reside in `r3`–`r6`. ABI argument
 placement is treated as a parallel register assignment: register-only cycles use
-`r7`, while mixed computed and register sources conservatively stage through the
+`flags`, while mixed computed and register sources conservatively stage through the
 stack. Static calls use the immediate ISA form when their fixed target is already
 known and fits 16 bits. Tail calls restore the current frame before jumping and
 are suppressed when an addressable local could be passed into the callee.
@@ -59,7 +83,7 @@ Narrow loads zero-extend in hardware. The backend uses left shift followed by ar
 
 The initial implementation models `long` and `int` using the same 32-bit representation and conversion behavior. Structures use natural member alignment capped at four bytes and retain tail padding. Enums currently use signed 32-bit `int`. `const` is represented on types and prevents writes or qualifier-discarding pointer conversions; `volatile` and `restrict` remain unsupported. A future standards-focused frontend should preserve integer rank explicitly before adding wider types.
 
-Static constant evaluation operates on the typed AST and applies width/sign normalization at each conversion and arithmetic operation. Static addresses remain `(symbol, byte_addend)` records until layout. PIC initialization in `_start` emits address stores before the optimized program body, deriving both destination and target from `r13`. No relocation metadata is required in the raw binary.
+Static constant evaluation operates on the typed AST and applies width/sign normalization at each conversion and arithmetic operation. Static addresses remain `(symbol, byte_addend)` records until layout. PIC initialization in `_start` emits address stores before the optimized program body, deriving both destination and target from `r12`. No relocation metadata is required in the raw binary.
 
 ## Software arithmetic
 

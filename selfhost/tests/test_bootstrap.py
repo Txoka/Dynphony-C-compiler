@@ -389,16 +389,16 @@ class BootstrapCompilerTests(unittest.TestCase):
         program = Machine(binary, load_address=control.program_load_address)
         self.assertEqual(program.run(), 42)
 
-    def test_forward_prototype_and_six_argument_abi(self):
-        source = b"""int sum(int a, int b, int c, int d, int e, int f);
-        int main(void) { return sum(1, 2, 3, 4, 5, 6); }
-        int sum(int a, int b, int c, int d, int e, int f) {
-            return a + b + c + d + e + f;
+    def test_forward_prototype_and_seven_argument_abi(self):
+        source = b"""int sum(int a, int b, int c, int d, int e, int f, int g);
+        int main(void) { return sum(1, 2, 3, 4, 5, 6, 7); }
+        int sum(int a, int b, int c, int d, int e, int f, int g) {
+            return a + b + c + d + e + f + g;
         }"""
         status, compiler, binary, control = run_stage0(self.compiler, source)
         self.assertEqual(status, 0)
         program = Machine(binary, load_address=control.program_load_address)
-        self.assertEqual(program.run(), 21)
+        self.assertEqual(program.run(), 28)
 
     def test_stack_passed_arguments(self):
         source = b'''int sum8(int a, int b, int c, int d,

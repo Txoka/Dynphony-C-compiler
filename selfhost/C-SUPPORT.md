@@ -75,8 +75,8 @@ The runtime-code path additionally supports:
 - Direct calls to `input`, `output`, `keyboard`, `screen`, `time`, `time_low`,
   `time_high`, `persistent_load`, and `persistent_store`.
 - Multiple scalar function definitions, prototypes with named parameters,
-  forward calls, nested calls, and recursion. The first six scalar arguments
-  use `r1` through `r6`; later arguments are passed on the stack. Parameters and
+  forward calls, nested calls, and recursion. The first seven scalar arguments
+  use `r1` through `r7`; later arguments are passed on the stack. Parameters and
   locals are saved in per-call stack frames.
 - Fixed local arrays with constant bounds, array-to-pointer
   decay, address-of, pointer dereference, and scaled subscripting. Array element

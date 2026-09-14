@@ -590,10 +590,10 @@ class ExecutionTests(unittest.TestCase):
             "int f(int n){if(n<2)return 1;return n*f(n-1);} int main(void){return f(6);}"
         )
         m = Machine(result.image.binary, 1 << 20)
-        for r in range(8, 14):
+        for r in range(8, 13):
             m.regs[r] = r * 19
         self.assertEqual(m.run(result.image.symbols["_halt"]), 720)
-        for r in range(8, 14):
+        for r in range(8, 13):
             self.assertEqual(m.regs[r], r * 19)
         self.assertEqual(m.regs[14], 0)
 
@@ -781,8 +781,31 @@ class EncodingTests(unittest.TestCase):
         self.assertEqual(isa.Register.FLAGS, 15)
         self.assertEqual(isa.register_name(isa.Register.R7), "r7")
         self.assertEqual(isa.parse_register("sp"), isa.Register.SP)
-        self.assertEqual(ABI.argument_registers, tuple(range(1, 7)))
+        self.assertEqual(ABI.argument_registers, tuple(range(1, 8)))
+        self.assertEqual(ABI.return_registers, tuple(range(1, 8)))
         self.assertEqual(ABI.return_register, isa.Register.R1)
+        self.assertEqual(ABI.status_register, isa.Register.FLAGS)
+        self.assertEqual(ABI.link_register, isa.Register.R13)
+        self.assertEqual(ABI.frame_pointer, isa.Register.R11)
+        self.assertEqual(ABI.pic_base_register, isa.Register.R12)
+
+    def test_r12_is_allocatable_only_without_pic(self):
+        body = """int a=x+1,b=x+2,c=x+3,d=x+4,e=x+5;
+            if(input()) return a+b+c+d+e; return a-b+c-d+e;"""
+        source = (
+            f"int f(int x){{{body}}} int g(int x){{return x;}} "
+            "int main(void){int (*p)(int)=input()?f:g;return p(9);}"
+        )
+        for pic in (False, True):
+            with self.subTest(pic=pic):
+                result = compile_source(source, target=Target(pic=pic, ram_size=4096))
+                start = result.image.symbols["f"]
+                end = min(
+                    (offset for offset in result.image.symbols.values() if offset > start),
+                    default=len(result.image.binary),
+                )
+                function = result.image.binary[start:end]
+                self.assertEqual(isa.push(12) in function, not pic)
 
     def test_lowerer_emits_canonical_calls_and_fallthrough(self):
         module = lower(
@@ -842,7 +865,7 @@ class EncodingTests(unittest.TestCase):
         self.assertIn("move_pile.tail_loop", result.ir.dump())
         self.assertNotIn("global_addr () move_pile", result.ir.dump())
         self.assertNotIn("main", result.image.symbols)
-        self.assertEqual(result.image.frames["_start"], 4)
+        self.assertEqual(result.image.frames["_start"], 0)
         self.assertLessEqual(
             len(result.image.binary), 320 if TEST_ISA == "symphony" else 260
         )
@@ -859,7 +882,7 @@ class EncodingTests(unittest.TestCase):
             "int main(void){int a=12345; int b=6789; return a+b;}"
         )
         self.assertNotIn("main", result.image.symbols)
-        self.assertEqual(result.image.frames["_start"], 4)
+        self.assertEqual(result.image.frames["_start"], 0)
         halt = len(isa.cheap_constant(1, 19134))
         self.assertEqual(result.image.symbols["_halt"], halt)
         self.assertEqual(result.image.binary[:halt], isa.cheap_constant(1, 19134))
@@ -875,7 +898,7 @@ class EncodingTests(unittest.TestCase):
         address = result.image.symbols["add"]
         self.assertIn("direct_call", result.ir.dump())
         self.assertNotIn("global_addr () add", result.ir.dump())
-        self.assertEqual(result.image.frames["add"], 4)
+        self.assertEqual(result.image.frames["add"], 0)
         self.assertEqual(
             result.image.binary[address : address + 3], isa.alu("add", 1, 1, 2)
         )
@@ -896,7 +919,7 @@ class EncodingTests(unittest.TestCase):
         binary = result.image.binary
         halt = result.image.symbols["_halt"]
         self.assertNotIn("main", result.image.symbols)
-        self.assertEqual(result.image.frames["_start"], 4)
+        self.assertEqual(result.image.frames["_start"], 0)
         self.assertEqual(binary[:halt], isa.cheap_constant(1, 42))
         self.assertEqual(binary[halt : halt + 4], isa.jump("jmp", halt, True))
         self.assertNotIn("__dyn_mul", result.image.symbols)
@@ -1029,6 +1052,14 @@ class EncodingTests(unittest.TestCase):
             ),
         )
         self.assertEqual(isa.ret(), bytes.fromhex("62 f0 0e 34 ee 00 04 48 0f 0f"))
+        self.assertEqual(
+            isa.link_call(7), bytes.fromhex("07 d0 34 dd 00 09 48 0f 07")
+        )
+        self.assertEqual(
+            isa.link_call(0x1234, True),
+            bytes.fromhex("07 d0 34 dd 00 0a 58 0f 12 34"),
+        )
+        self.assertEqual(isa.link_return(), bytes.fromhex("48 0f 0d"))
 
     def test_io_and_persistent_intrinsics(self):
         source = """int main(void) {
@@ -1129,6 +1160,18 @@ class EncodingTests(unittest.TestCase):
         self.assertEqual(m.run(), 42)
         self.assertEqual(m.steps, 3)
         self.assertEqual(m.read(2, 2), 0x087F)
+
+    def test_status_flag_branches_without_comparison(self):
+        for status, branch in ((1, "je"), (0, "jne")):
+            with self.subTest(status=status, branch=branch):
+                binary = (
+                    isa.mov(isa.Register.FLAGS, status, True)
+                    + isa.jump(branch, 12, True)
+                    + isa.cheap_constant(1, 99)
+                    + isa.cheap_constant(1, 42)
+                )
+                machine = Machine(binary, 256)
+                self.assertEqual(machine.run(16), 42)
 
     def test_cli(self):
         with tempfile.TemporaryDirectory() as d:

@@ -90,8 +90,8 @@ operations do not pull those helpers into the image.
 - `break` and `continue` inside loops.
 - Function declarations and definitions, direct calls, indirect function-pointer
   calls, ordinary recursion, and optimized tail calls.
-- Scalar parameters and scalar return values. Arguments one through six use
-  `r1` through `r6`; later scalar arguments are passed on the stack. `r1` holds
+- Scalar parameters and scalar return values. Arguments one through seven use
+  `r1` through `r7`; later scalar arguments are passed on the stack. `r1` holds
   the return value.
 
 The program entry point must be `int main(void)` or `int main()`. In this subset,

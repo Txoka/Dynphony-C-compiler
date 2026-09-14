@@ -1,18 +1,19 @@
 """Dynphony instruction selection, ABI lowering, and frame construction."""
 
 from . import isa
+from .abi import ABI
 from .assembler import Assembler
 from .config import Image, Target
 from ...middle.model import CompileError, align_up
 
 
 class Backend:
-    """r1/r2 operands, r7 scratch, r12 frame pointer, r13 PIC base.
+    """r1/r2 operands, r7 scratch, r11 frame pointer, r12 PIC base.
 
     Straight-line leaf values use incoming/caller-saved registers. Across control
     flow, frequently used values can live in r8-r11; a function saves only the
     callee-saved registers it actually receives. Remaining live values have frame
-    slots. The startup stub owns r13; generated functions leave it unchanged.
+    slots. Calls place their continuation in r13; PIC startup owns r12.
     """
 
     def __init__(self, module, target):
@@ -39,7 +40,7 @@ class Backend:
 
     @staticmethod
     def straight_leaf_eligible(f):
-        if len(f.params) > 6:
+        if len(f.params) > len(ABI.argument_registers):
             return False
         allowed = {
             "param",
@@ -123,7 +124,7 @@ class Backend:
                     if register != 1:
                         a.emit(isa.mov(1, register))
                     release(value)
-                a.emit(isa.ret())
+                a.emit(isa.link_return())
                 return True
 
             if op == "intrinsic":
@@ -262,10 +263,10 @@ class Backend:
 
     def slot_address(self, offset, r=7):
         if offset <= 0xFFFF:
-            self.a.emit(isa.alu("sub", r, 12, offset, True))
+            self.a.emit(isa.alu("sub", r, ABI.frame_pointer, offset, True))
         else:
             self.a.emit(isa.cheap_constant(r, offset))
-            self.a.emit(isa.alu("sub", r, 12, r))
+            self.a.emit(isa.alu("sub", r, ABI.frame_pointer, r))
 
     def get(self, v, r):
         if v in self.register_values:
@@ -378,8 +379,9 @@ class Backend:
 
     def place_call_arguments(self, arguments):
         """Place register arguments and push arguments seven onward right-to-left."""
-        register_arguments = arguments[:6]
-        stack_arguments = arguments[6:]
+        register_count = len(ABI.argument_registers)
+        register_arguments = arguments[:register_count]
+        stack_arguments = arguments[register_count:]
         for value in reversed(stack_arguments):
             self.get(value, 1)
             self.a.emit(isa.push(1))
@@ -414,9 +416,9 @@ class Backend:
                     None,
                 )
                 if selected is None:
-                    # Break a register cycle with r7, which is scratch at calls.
-                    self.a.emit(isa.mov(7, pending[0][1]))
-                    pending[0][1] = 7
+                    # flags is caller-clobbered and is not an argument register.
+                    self.a.emit(isa.mov(ABI.status_register, pending[0][1]))
+                    pending[0][1] = ABI.status_register
                     continue
                 target, source = pending.pop(selected)
                 self.a.emit(isa.mov(target, source))
@@ -441,15 +443,17 @@ class Backend:
             self.a.emit(isa.cheap_constant(7, size))
             self.a.emit(isa.alu("add", 14, 14, 7))
 
-    def load_stack_parameter(self, position, type_, saved_register_count, destination=1):
-        # r12 points below the saved caller frame pointer. The return address is
-        # at r12+4 and argument seven begins at r12+8.
-        offset = 4 * (position - 5 + saved_register_count)
+    def load_stack_parameter(
+        self, position, type_, saved_register_count, link_saved, destination=1
+    ):
+        # The frame pointer follows its saved predecessor, any saved value
+        # registers, and an optional saved r13. Argument eight is at the entry SP.
+        offset = 4 * (position - 7 + saved_register_count + int(link_saved))
         if offset <= 0xFFFF:
-            self.a.emit(isa.alu("add", 7, 12, offset, True))
+            self.a.emit(isa.alu("add", 7, ABI.frame_pointer, offset, True))
         else:
             self.a.emit(isa.cheap_constant(7, offset))
-            self.a.emit(isa.alu("add", 7, 12, 7))
+            self.a.emit(isa.alu("add", 7, ABI.frame_pointer, 7))
         self.a.emit(isa.load(type_.size, destination, 7))
         self.normalize(destination, type_)
 
@@ -606,11 +610,14 @@ class Backend:
             for value, register in zip(caller_candidates, range(3, 7))
         })
         remaining = [value for value in ordered if value not in self.register_values]
-        callee_candidates = remaining[:4]
+        callee_registers = [8, 9, 10]
+        if not self.target.pic:
+            callee_registers.append(12)
+        callee_candidates = remaining[:len(callee_registers)]
         self.register_values.update(
             {
                 value: register
-                for value, register in zip(callee_candidates, range(8, 12))
+                for value, register in zip(callee_candidates, callee_registers)
             }
         )
         live_values = [
@@ -627,7 +634,7 @@ class Backend:
         a.label(f.name)
         for instruction in f.instructions:
             if instruction.op == "init_pic" and self.target.pic:
-                a.emit(isa.counter(13))
+                a.emit(isa.counter(ABI.pic_base_register))
             elif instruction.op == "init_stack":
                 a.emit(isa.mov(14, 0))
             elif instruction.op == "relocate_globals":
@@ -636,26 +643,43 @@ class Backend:
                 break
         leaf_start = len(a.code)
         if self.emit_straight_leaf(f):
-            self.frames[f.name] = 4
+            self.frames[f.name] = 0
             return
         # The allocator is allowed to decline when local pressure exceeds its
         # register set. It emits no lasting partial fast path in that case.
         del a.code[leaf_start:]
         frame = self.prepare_frame(f)
-        uses_frame = frame > 0 or len(f.params) > 6
+        uses_frame = frame > 0 or len(f.params) > len(ABI.argument_registers)
+        returns_to_caller = any(
+            instruction.op in ("return", "tailcall", "direct_tailcall")
+            for instruction in f.instructions
+        )
+        saves_link = returns_to_caller and any(
+            instruction.op in ("call", "direct_call")
+            or (
+                instruction.op == "binary"
+                and instruction.extra in ("*", "/", "%")
+            )
+            for instruction in f.instructions
+        )
         saved_registers = sorted(
             register for register in self.register_values.values() if register >= 8
         )
+        staged_seventh = len(f.params) >= len(ABI.argument_registers)
         self.frames[f.name] = (
-            frame + 4 + 4 * len(saved_registers) + (4 if uses_frame else 0)
+            frame + 4 * len(saved_registers)
+            + (4 if uses_frame else 0) + (4 if saves_link else 0)
+            + (4 if staged_seventh else 0)
         )
         if self.frames[f.name] >= self.target.ram_size:
             raise CompileError(f"{f.name}: stack frame exceeds RAM")
+        if saves_link:
+            a.emit(isa.push(ABI.link_register))
         for register in saved_registers:
             a.emit(isa.push(register))
         if uses_frame:
-            a.emit(isa.push(12))
-            a.emit(isa.mov(12, 14))
+            a.emit(isa.push(ABI.frame_pointer))
+            a.emit(isa.mov(ABI.frame_pointer, 14))
             if frame <= 0xFFFF:
                 a.emit(isa.alu("sub", 14, 14, frame, True))
             else:
@@ -666,11 +690,15 @@ class Backend:
             for instruction in f.instructions
             if instruction.op == "param"
         }
+        if staged_seventh:
+            # r7 is also the backend address scratch. Preserve its incoming
+            # argument until the other parameter homes have been established.
+            a.emit(isa.push(ABI.argument_registers[-1]))
         # Store every register parameter that needs a frame slot before moving
         # any promoted parameter into its allocated home.  A move such as
         # r1 -> r4 must not destroy the still-unhandled fourth argument.
         register_moves = []
-        for r, sym in enumerate(f.params[:6], 1):
+        for r, sym in enumerate(f.params[:len(ABI.argument_registers) - 1], 1):
             if sym.key in promoted:
                 instruction = promoted[sym.key]
                 destination = self.register_values.get(instruction.dst)
@@ -682,8 +710,8 @@ class Backend:
                 self.slot_address(self.locals[sym.key])
                 a.emit(isa.store(sym.type.size, 7, r))
 
-        # Resolve the incoming-register permutation in parallel, using the ABI
-        # scratch register to break cycles.
+        # Resolve the incoming-register permutation in parallel. r7 now carries
+        # an argument, so use caller-clobbered flags to break cycles.
         while register_moves:
             selected = next(
                 (
@@ -699,14 +727,27 @@ class Backend:
                 None,
             )
             if selected is None:
-                a.emit(isa.mov(7, register_moves[0][1]))
-                register_moves[0][1] = 7
+                a.emit(isa.mov(ABI.status_register, register_moves[0][1]))
+                register_moves[0][1] = ABI.status_register
                 continue
             target, source = register_moves.pop(selected)
             a.emit(isa.mov(target, source))
 
-        for r, sym in enumerate(f.params[6:], 7):
-            self.load_stack_parameter(r, sym.type, len(saved_registers))
+        if staged_seventh:
+            sym = f.params[len(ABI.argument_registers) - 1]
+            a.emit(isa.pop(ABI.status_register))
+            if sym.key in promoted:
+                self.put(promoted[sym.key].dst, ABI.status_register)
+            else:
+                self.slot_address(self.locals[sym.key])
+                a.emit(isa.store(sym.type.size, 7, ABI.status_register))
+
+        for r, sym in enumerate(
+            f.params[len(ABI.argument_registers):], len(ABI.argument_registers) + 1
+        ):
+            self.load_stack_parameter(
+                r, sym.type, len(saved_registers), saves_link
+            )
             if sym.key in promoted:
                 self.put(promoted[sym.key].dst, 1)
             else:
@@ -867,8 +908,7 @@ class Backend:
                         + ("s" if i.type.signed else "u")
                         + ("div" if i.extra == "/" else "mod")
                     )
-                    a.address(7, helper)
-                    a.call_register(7)
+                    a.call(helper)
                 else:
                     name = {
                         "+": "add",
@@ -899,12 +939,12 @@ class Backend:
                 if not symbolic:
                     # Preserve an indirect target before argument placement can
                     # overwrite its allocated caller-saved register.
-                    self.get(i.args[0], 7)
+                    self.get(i.args[0], ABI.call_target_register)
                 stack_arguments = self.place_call_arguments(arguments)
                 if symbolic:
                     a.call(target.extra)
                 else:
-                    a.call_register(7)
+                    a.call_register(ABI.call_target_register)
                 self.discard_stack_arguments(stack_arguments)
                 self.normalize(1, i.type)
             elif op == "direct_call":
@@ -920,26 +960,30 @@ class Backend:
                     and not self.target.pic
                 )
                 if not symbolic:
-                    self.get(i.args[0], 7)
+                    self.get(i.args[0], ABI.call_target_register)
                 self.place_call_arguments(i.args[1:])
                 if uses_frame:
-                    a.emit(isa.mov(14, 12))
-                    a.emit(isa.pop(12))
+                    a.emit(isa.mov(14, ABI.frame_pointer))
+                    a.emit(isa.pop(ABI.frame_pointer))
                 for register in reversed(saved_registers):
                     a.emit(isa.pop(register))
+                if saves_link:
+                    a.emit(isa.pop(ABI.link_register))
                 if symbolic:
-                    a.branch("jmp", target.extra)
+                    a.branch("jmp", target.extra, ABI.call_target_register)
                 else:
-                    a.emit(isa.jump("jmp", 7))
+                    a.emit(isa.jump("jmp", ABI.call_target_register))
                 continue
             elif op == "direct_tailcall":
                 self.place_call_arguments(i.args)
                 if uses_frame:
-                    a.emit(isa.mov(14, 12))
-                    a.emit(isa.pop(12))
+                    a.emit(isa.mov(14, ABI.frame_pointer))
+                    a.emit(isa.pop(ABI.frame_pointer))
                 for register in reversed(saved_registers):
                     a.emit(isa.pop(register))
-                a.branch("jmp", i.extra)
+                if saves_link:
+                    a.emit(isa.pop(ABI.link_register))
+                a.branch("jmp", i.extra, ABI.call_target_register)
                 continue
             elif op == "cbranch_if":
                 operator, target_label = i.extra
@@ -985,10 +1029,12 @@ class Backend:
                 if i.args:
                     self.get(i.args[0], 1)
                 if uses_frame:
-                    a.emit(isa.mov(14, 12))
-                    a.emit(isa.pop(12))
+                    a.emit(isa.mov(14, ABI.frame_pointer))
+                    a.emit(isa.pop(ABI.frame_pointer))
                 for register in reversed(saved_registers):
                     a.emit(isa.pop(register))
+                if saves_link:
+                    a.emit(isa.pop(ABI.link_register))
                 if not self.target.pic:
                     a.label("_halt")
                     a.branch("jmp", "_halt")
@@ -1005,11 +1051,13 @@ class Backend:
             return
         a.label(epilogue)
         if uses_frame:
-            a.emit(isa.mov(14, 12))
-            a.emit(isa.pop(12))
+            a.emit(isa.mov(14, ABI.frame_pointer))
+            a.emit(isa.pop(ABI.frame_pointer))
         for register in reversed(saved_registers):
             a.emit(isa.pop(register))
-        a.emit(isa.ret())
+        if saves_link:
+            a.emit(isa.pop(ABI.link_register))
+        a.emit(isa.link_return())
 
     def build(self):
         self.target.validate()

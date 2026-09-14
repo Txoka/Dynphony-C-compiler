@@ -3,7 +3,13 @@
 from ..ir import Instruction, ModuleIR
 from ...runtime.intrinsics import NAMES as INTRINSIC_NAMES
 from ..model import pointer
-from ..analysis.cfg import build_cfg, prune_unreachable_blocks
+from ..analysis.cfg import (
+    TERMINATORS,
+    build_cfg,
+    compute_dominators,
+    find_natural_loops,
+    prune_unreachable_blocks,
+)
 from .manager import FixedPointPassManager
 
 PURE = {
@@ -17,6 +23,41 @@ PURE = {
     "unary",
     "binary",
 }
+
+
+ADDRESS_PURE = {"local_addr", "global_addr", "binary", "cast", "copy", "const"}
+
+
+def _address_keys(function, single):
+    """Structural value-numbering keys for address-computing values.
+
+    Two values get the same key exactly when they are provably the same
+    address without any alias analysis: identical `local_addr`/`global_addr`
+    origin, identical literal `const`, or built from the same op/operands
+    (recursively keyed the same way). This lets passes recognize repeated
+    address expressions (e.g. two lowerings of the same array/struct access,
+    each with their own freshly-emitted offset constant) as one location, the
+    same way a real value-numbering pass would, without claiming anything
+    about memory that isn't a pure address computation.
+    """
+    keys = {}
+
+    def key(value):
+        if value in keys:
+            return keys[value]
+        instruction = single.get(value)
+        if instruction is None or instruction.op not in ADDRESS_PURE:
+            result = ("value", value)
+        elif instruction.op in ("local_addr", "global_addr"):
+            result = (instruction.op, instruction.extra)
+        elif instruction.op == "const":
+            result = (instruction.op, instruction.extra)
+        else:
+            result = (instruction.op, instruction.extra, tuple(key(arg) for arg in instruction.args))
+        keys[value] = result
+        return result
+
+    return key
 
 
 def _definitions(function):
@@ -81,6 +122,450 @@ def promote_scalar_locals(function):
             )
         rewritten.append(instruction)
     function.instructions = rewritten
+
+
+MEMORY_EFFECTS = {"store", "call", "direct_call", "tailcall", "direct_tailcall", "intrinsic", "stack_alloc"}
+
+
+def hoist_loop_invariants(function):
+    """Move loop-invariant pure computations to a preheader before the header.
+
+    A value is invariant when it has exactly one definition (so it is not a
+    mem2reg-promoted mutable slot with several ``copy`` sites), that definition
+    is a side-effect-free op, sits inside the loop, and every argument is
+    either defined outside the loop or already proven invariant.  Loads are
+    only hoisted out of loops with no stores/calls, since the IR carries no
+    alias information to prove a load and a store elsewhere never conflict.
+    """
+    changed = False
+    # Loop headers already tried and found unhoistable this call, identified by
+    # the header block's first instruction (stable across index-shifting
+    # rewrites elsewhere in the function).
+    skip_headers = set()
+    # Process one loop per CFG snapshot: rewriting instructions can shift block
+    # indices, so the CFG, dominators and loop set are rebuilt after each move.
+    # Innermost-first (smallest block set) lets a nested loop's invariants
+    # become hoistable to its parent once freed of the inner loop's values.
+    while True:
+        cfg = build_cfg(function)
+        if not cfg.blocks:
+            break
+        dominators = compute_dominators(cfg)
+        loops = [
+            loop
+            for loop in find_natural_loops(cfg, dominators)
+            if id(cfg.blocks[loop.header].instructions[0]) not in skip_headers
+        ]
+        if not loops:
+            break
+
+        definitions = _definitions(function)
+        single = {value: items[0] for value, items in definitions.items() if len(items) == 1}
+        block_of = {}
+        for block in cfg.blocks:
+            for instruction in block.instructions:
+                block_of[id(instruction)] = block.index
+
+        loop = min(loops, key=lambda l: len(l.blocks))
+        header_key = id(cfg.blocks[loop.header].instructions[0])
+        has_memory_effects = any(
+            instruction.op in MEMORY_EFFECTS
+            for index in loop.blocks
+            for instruction in cfg.blocks[index].instructions
+        )
+        preheader_predecessors = [
+            p for p in cfg.blocks[loop.header].predecessors if p not in loop.blocks
+        ]
+        if len(preheader_predecessors) != 1:
+            skip_headers.add(header_key)
+            continue  # no single edge to insert a preheader jump/label pair on
+        invariant = set()
+
+        def is_invariant(value):
+            if value in invariant:
+                return True
+            instruction = single.get(value)
+            if instruction is None:
+                return False
+            if block_of.get(id(instruction)) not in loop.blocks:
+                return True
+            if instruction.op not in PURE or instruction.op == "param":
+                return False
+            if instruction.op == "load" and has_memory_effects:
+                return False
+            if not all(is_invariant(arg) for arg in instruction.args):
+                return False
+            invariant.add(value)
+            return True
+
+        hoisted_ids = []
+        for index in sorted(loop.blocks):
+            for instruction in cfg.blocks[index].instructions:
+                if (
+                    instruction.dst is not None
+                    and instruction.dst in single
+                    and single[instruction.dst] is instruction
+                    and is_invariant(instruction.dst)
+                ):
+                    hoisted_ids.append(id(instruction))
+
+        if not hoisted_ids:
+            skip_headers.add(header_key)
+            continue
+
+        hoisted_ids = set(hoisted_ids)
+        preheader = preheader_predecessors[0]
+        preamble = [
+            instruction
+            for instruction in function.instructions
+            if id(instruction) in hoisted_ids
+        ]
+        # Insert before the preheader's terminator (if any) so the preamble
+        # stays reachable, rather than after it where it would be dead code.
+        last = cfg.blocks[preheader].instructions[-1]
+        last_id = id(last)
+        insert_before_last = last.op in TERMINATORS
+        rewritten = []
+        for instruction in function.instructions:
+            if id(instruction) in hoisted_ids:
+                continue
+            if insert_before_last and id(instruction) == last_id:
+                rewritten.extend(preamble)
+            rewritten.append(instruction)
+            if not insert_before_last and id(instruction) == last_id:
+                rewritten.extend(preamble)
+        function.instructions = rewritten
+        changed = True
+        # Loop back to the top of the while: cfg/dominators/loops are rebuilt
+        # fresh against the rewritten instructions before the next pick.
+
+    return changed
+
+
+def reduce_induction_strength(function):
+    """Replace ``base + i`` address recomputation with an incremental accumulator.
+
+    Only handles the shape that can be proven correct without phi nodes: a
+    basic induction variable ``i``, defined once outside the loop (its entry
+    value) and updated by exactly one ``binary(i, step_const, '+'|'-')`` whose
+    result flows into the next iteration; a derived address
+    ``binary(base, i, '+')`` with a loop-invariant ``base``; and the update
+    instruction *dominates* every use of that address within the loop body (so
+    every use in an iteration sees the same ``i`` the update produced for it).
+
+    Under that ordering constraint the address only ever changes by ``step``
+    between one use and the next, so it is computed once in the preheader from
+    ``i``'s entry value and bumped by ``step`` immediately after each update,
+    instead of re-adding ``base`` every time.
+
+    ROADMAP: this dominance-ordering restriction (and the single-update-site
+    requirement) exists only because the IR has no phi nodes to merge an
+    induction variable's preheader and back-edge values. Once full SSA lands
+    (see project-dyncc-optimizer-roadmap memory), replace this with a general
+    phi-driven induction-variable pass that also handles uses preceding the
+    update and multiple update sites per header.
+    """
+    changed = False
+    # As in hoist_loop_invariants: rewriting shifts block indices, so each
+    # qualifying loop is handled against a freshly rebuilt CFG/dominators,
+    # one loop per snapshot, skipping headers already tried this call.
+    skip_headers = set()
+    while True:
+        cfg = build_cfg(function)
+        if not cfg.blocks:
+            break
+        dominators = compute_dominators(cfg)
+        loops = [
+            loop
+            for loop in find_natural_loops(cfg, dominators)
+            if id(cfg.blocks[loop.header].instructions[0]) not in skip_headers
+        ]
+        if not loops:
+            break
+
+        definitions = _definitions(function)
+        single = {value: items[0] for value, items in definitions.items() if len(items) == 1}
+        constants = _constant_definitions(function)
+        block_of = {}
+        index_of = {}
+        for block in cfg.blocks:
+            for position, instruction in enumerate(block.instructions):
+                block_of[id(instruction)] = block.index
+                index_of[id(instruction)] = position
+
+        def dominates_within_block(a_block, a_pos, b_block, b_pos):
+            """True if instruction a dominates instruction b (both given as block/position)."""
+            if a_block == b_block:
+                return a_pos <= b_pos
+            return dominators.dominates(a_block, b_block)
+
+        loop = min(loops, key=lambda l: len(l.blocks))
+        header_key = id(cfg.blocks[loop.header].instructions[0])
+        preheader_predecessors = [
+            p for p in cfg.blocks[loop.header].predecessors if p not in loop.blocks
+        ]
+        if len(preheader_predecessors) != 1:
+            skip_headers.add(header_key)
+            continue
+        preheader = preheader_predecessors[0]
+
+        # Basic induction variables: exactly one definition inside the loop,
+        # of the form i = i +/- step_const, plus exactly one definition
+        # outside the loop giving its entry value.
+        candidates = {}
+        for index in loop.blocks:
+            for instruction in cfg.blocks[index].instructions:
+                if instruction.op != "binary" or instruction.extra not in ("+", "-"):
+                    continue
+                left, right = instruction.args
+                if left != instruction.dst:
+                    continue
+                step = constants.get(right)
+                if step is None:
+                    continue
+                dst_defs = [
+                    d for d in definitions.get(instruction.dst, []) if d is not instruction
+                ]
+                in_loop_defs = [d for d in dst_defs if block_of.get(id(d)) in loop.blocks]
+                out_defs = [d for d in dst_defs if block_of.get(id(d)) not in loop.blocks]
+                if in_loop_defs or len(out_defs) != 1:
+                    continue  # not a simple single-update loop counter
+                if instruction.dst in candidates:
+                    candidates[instruction.dst] = None
+                    continue
+                signed_step = step if instruction.extra == "+" else -step
+                candidates[instruction.dst] = (instruction, signed_step, out_defs[0])
+        candidates = {k: v for k, v in candidates.items() if v is not None}
+        if not candidates:
+            skip_headers.add(header_key)
+            continue
+
+        rewrites = []
+        for index in sorted(loop.blocks):
+            for instruction in cfg.blocks[index].instructions:
+                if instruction.op != "binary" or instruction.extra != "+":
+                    continue
+                if instruction.dst not in single or single[instruction.dst] is not instruction:
+                    continue
+                left, right = instruction.args
+                for base, induction_var in ((left, right), (right, left)):
+                    if induction_var not in candidates:
+                        continue
+                    base_def = single.get(base)
+                    if base_def is None or block_of.get(id(base_def)) in loop.blocks:
+                        continue  # base must be defined outside the loop
+                    update_instr, signed_step, entry_def = candidates[induction_var]
+                    if id(instruction) == id(update_instr):
+                        continue
+                    use_block, use_pos = block_of[id(instruction)], index_of[id(instruction)]
+                    update_block = block_of[id(update_instr)]
+                    update_pos = index_of[id(update_instr)]
+                    # The update must dominate this use so every use in an
+                    # iteration observes the value the update just produced
+                    # (never a stale value from before the update ran).
+                    if not dominates_within_block(update_block, update_pos, use_block, use_pos):
+                        continue
+                    rewrites.append((instruction, base, entry_def, update_instr, signed_step))
+                    break
+
+        if not rewrites:
+            skip_headers.add(header_key)
+            continue
+
+        preamble = []
+        acc0 = function.values
+        function.values += 1
+        address_instruction, base, entry_def, update_instr, signed_step = rewrites[0]
+        preamble.append(
+            Instruction("binary", acc0, (base, entry_def.dst), address_instruction.type, "+")
+        )
+        step_value = function.values
+        function.values += 1
+        preamble.append(
+            Instruction("const", step_value, (), address_instruction.type, abs(signed_step))
+        )
+        bump = Instruction(
+            "binary",
+            acc0,
+            (acc0, step_value),
+            address_instruction.type,
+            "+" if signed_step >= 0 else "-",
+        )
+
+        replace_ids = {id(address_instruction)}
+        for other, other_base, other_entry, other_update, other_step in rewrites[1:]:
+            if (
+                other_base != base
+                or id(other_entry) != id(entry_def)
+                or id(other_update) != id(update_instr)
+                or other_step != signed_step
+            ):
+                continue
+            replace_ids.add(id(other))
+
+        # Insert before the preheader's terminator (if any) so the preamble
+        # stays reachable, rather than after it where it would be dead code.
+        last = cfg.blocks[preheader].instructions[-1]
+        last_id = id(last)
+        insert_before_last = last.op in TERMINATORS
+        update_id = id(update_instr)
+        rewritten = []
+        for instruction in function.instructions:
+            if id(instruction) in replace_ids:
+                rewritten.append(Instruction("copy", instruction.dst, (acc0,), instruction.type))
+                if id(instruction) == update_id:
+                    rewritten.append(bump)
+                continue
+            if insert_before_last and id(instruction) == last_id:
+                rewritten.extend(preamble)
+            rewritten.append(instruction)
+            if not insert_before_last and id(instruction) == last_id:
+                rewritten.extend(preamble)
+            if id(instruction) == update_id:
+                rewritten.append(bump)
+        function.instructions = rewritten
+        changed = True
+        # Loop back to the top of the while: cfg/dominators/loops are rebuilt
+        # fresh against the rewritten instructions before the next pick.
+
+    return changed
+
+
+def eliminate_redundant_loop_memory(function):
+    """Eliminate redundant loads/stores to the same address within a loop.
+
+    Same as ``hoist_loop_invariants``, the IR carries no alias information, so
+    this only reasons about a loop with *no calls* (a call could read or write
+    anything) and treats two memory ops as touching the same location only
+    when their addresses are provably identical: either the literal same SSA
+    value, or the same structural address computation per ``_address_keys``
+    (there is no CSE pass in this compiler, so e.g. two independent lowerings
+    of ``arr[5]`` produce distinct SSA values for the same address — without
+    this, the rewrite below would essentially never fire on real code).
+
+    Two rewrites, both requiring the earlier op to dominate the later one so
+    every path to the later op has already executed the earlier one:
+      - load-after-store/load: a load whose address was already loaded or
+        stored (with the same value) earlier on every path becomes a copy of
+        that earlier value.
+      - store-after-store: a store whose address was already stored on every
+        path since, with no intervening load of that address, is dead and is
+        removed (the earlier store's value is never observed).
+
+    ROADMAP: this dominance-based, no-calls-allowed scoping is a GVN-lite
+    stand-in for real alias analysis. Once full SSA lands (see
+    project-dyncc-optimizer-roadmap memory), replace with a proper memory-SSA
+    or points-to-based redundant load/store elimination that also handles
+    loops containing calls to functions proven not to alias the address.
+    """
+    changed = False
+    skip_headers = set()
+    while True:
+        cfg = build_cfg(function)
+        if not cfg.blocks:
+            break
+        dominators = compute_dominators(cfg)
+        loops = [
+            loop
+            for loop in find_natural_loops(cfg, dominators)
+            if id(cfg.blocks[loop.header].instructions[0]) not in skip_headers
+        ]
+        if not loops:
+            break
+
+        block_of = {}
+        index_of = {}
+        for block in cfg.blocks:
+            for position, instruction in enumerate(block.instructions):
+                block_of[id(instruction)] = block.index
+                index_of[id(instruction)] = position
+
+        def dominates_within_block(a_block, a_pos, b_block, b_pos):
+            if a_block == b_block:
+                return a_pos <= b_pos
+            return dominators.dominates(a_block, b_block)
+
+        definitions = _definitions(function)
+        single = {value: items[0] for value, items in definitions.items() if len(items) == 1}
+        address_key = _address_keys(function, single)
+
+        loop = min(loops, key=lambda l: len(l.blocks))
+        header_key = id(cfg.blocks[loop.header].instructions[0])
+        has_calls = any(
+            instruction.op in ("call", "direct_call", "tailcall", "direct_tailcall", "intrinsic")
+            for index in loop.blocks
+            for instruction in cfg.blocks[index].instructions
+        )
+        if has_calls:
+            skip_headers.add(header_key)
+            continue
+
+        # Memory ops to this address, in program order, restricted to this loop.
+        by_address = {}
+        for index in sorted(loop.blocks):
+            for instruction in cfg.blocks[index].instructions:
+                if instruction.op == "load":
+                    by_address.setdefault(address_key(instruction.args[0]), []).append(instruction)
+                elif instruction.op == "store":
+                    by_address.setdefault(address_key(instruction.args[0]), []).append(instruction)
+
+        redundant_loads = {}  # id(load) -> replacement value
+        dead_stores = set()  # id(store)
+        for address, ops in by_address.items():
+            for later_pos, later in enumerate(ops):
+                if later.op != "load" or id(later) in redundant_loads:
+                    continue
+                later_block, later_index = block_of[id(later)], index_of[id(later)]
+                for earlier in reversed(ops[:later_pos]):
+                    if id(earlier) in dead_stores:
+                        continue
+                    earlier_block, earlier_index = block_of[id(earlier)], index_of[id(earlier)]
+                    if not dominates_within_block(
+                        earlier_block, earlier_index, later_block, later_index
+                    ):
+                        continue
+                    value = earlier.dst if earlier.op == "load" else earlier.args[1]
+                    redundant_loads[id(later)] = value
+                    break
+
+        for address, ops in by_address.items():
+            for earlier_pos, earlier in enumerate(ops):
+                if earlier.op != "store" or earlier_pos + 1 >= len(ops):
+                    continue
+                earlier_block, earlier_index = block_of[id(earlier)], index_of[id(earlier)]
+                # The next op to this address in program order: if it's a
+                # store that this store dominates, no load ever observes
+                # `earlier`'s value (the next store always overwrites it
+                # first), so `earlier` is dead.
+                later = ops[earlier_pos + 1]
+                if later.op != "store" or id(later) in dead_stores:
+                    continue
+                later_block, later_index = block_of[id(later)], index_of[id(later)]
+                if dominates_within_block(
+                    earlier_block, earlier_index, later_block, later_index
+                ):
+                    dead_stores.add(id(earlier))
+
+        if not redundant_loads and not dead_stores:
+            skip_headers.add(header_key)
+            continue
+
+        rewritten = []
+        for instruction in function.instructions:
+            if id(instruction) in dead_stores:
+                continue
+            if id(instruction) in redundant_loads:
+                rewritten.append(
+                    Instruction("copy", instruction.dst, (redundant_loads[id(instruction)],), instruction.type)
+                )
+                continue
+            rewritten.append(instruction)
+        function.instructions = rewritten
+        changed = True
+        # Loop back to the top of the while: cfg/dominators/loops are rebuilt
+        # fresh against the rewritten instructions before the next pick.
+
+    return changed
 
 
 def _normalize(value, type_):
@@ -1433,6 +1918,9 @@ def _optimize_functions(functions):
         propagate_and_fold(function)
         simplify_control_flow(function)
         simplify_algebra(function)
+        hoist_loop_invariants(function)
+        reduce_induction_strength(function)
+        eliminate_redundant_loop_memory(function)
         strength_reduce(function)
         remove_dead_values(function)
         propagate_and_fold(function)

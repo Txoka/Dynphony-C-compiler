@@ -1,0 +1,8 @@
+; Dynphony target options.
+
+HeaderInclude
+dynphony-protos.h
+
+mdynphony-abi=
+Target RejectNegative Joined Var(dynphony_abi_string) Init("v1")
+Select Dynphony ABI policy (currently only v1).

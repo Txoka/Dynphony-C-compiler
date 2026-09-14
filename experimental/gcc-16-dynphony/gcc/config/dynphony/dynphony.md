@@ -1,31 +1,37 @@
-;; Dynphony GCC machine description -- integer bootstrap.
+;; GCC machine description for the Dynphony ISA bootstrap backend.
 
-(define_constants [(ZR_REG 0) (RET_REG 1) (SP_REG 14) (CMP_REG 15)])
+(define_constants
+  [(ZR_REG 0)
+   (SP_REG 14)
+   (CMP_REG 15)])
 
 (define_constraint "I"
-  "Unsigned 16-bit Dynphony immediate."
+  "Unsigned 16-bit immediate."
   (and (match_code "const_int")
        (match_test "IN_RANGE (ival, 0, 65535)")))
 
+(define_register_constraint "r" "GENERAL_REGS"
+  "General Dynphony register.")
+
 (define_insn "movsi"
   [(set (match_operand:SI 0 "nonimmediate_operand" "=r,r,m")
-        (match_operand:SI 1 "general_operand"      "r,I,r"))]
+        (match_operand:SI 1 "general_operand" "r,I,r"))]
   ""
-  "@\n\tmov\t%0, %1\n\tmov\t%0, %1\n\tstore_32\t%0, %1"
+  "@\n\tmov\t%0, %1\n\tmov\t%0, %1\n\tstore32\t%1, %0"
   [(set_attr "length" "3,4,3")])
 
 (define_insn "movhi"
   [(set (match_operand:HI 0 "nonimmediate_operand" "=r,m")
-        (match_operand:HI 1 "general_operand"      "r,r"))]
+        (match_operand:HI 1 "general_operand" "r,r"))]
   ""
-  "@\n\tmov\t%0, %1\n\tstore_16\t%0, %1"
+  "@\n\tmov\t%0, %1\n\tstore16\t%1, %0"
   [(set_attr "length" "3,3")])
 
 (define_insn "movqi"
   [(set (match_operand:QI 0 "nonimmediate_operand" "=r,m")
-        (match_operand:QI 1 "general_operand"      "r,r"))]
+        (match_operand:QI 1 "general_operand" "r,r"))]
   ""
-  "@\n\tmov\t%0, %1\n\tstore_8\t%0, %1"
+  "@\n\tmov\t%0, %1\n\tstore8\t%1, %0"
   [(set_attr "length" "3,3")])
 
 (define_insn "addsi3"
@@ -33,7 +39,7 @@
         (plus:SI (match_operand:SI 1 "register_operand" "r,r")
                  (match_operand:SI 2 "nonmemory_operand" "r,I")))]
   ""
-  "add\t%0, %1, %2"
+  "@\n\tadd\t%0, %1, %2\n\taddi\t%0, %1, %2"
   [(set_attr "length" "3,4")])
 
 (define_insn "subsi3"
@@ -41,7 +47,7 @@
         (minus:SI (match_operand:SI 1 "register_operand" "r,r")
                   (match_operand:SI 2 "nonmemory_operand" "r,I")))]
   ""
-  "sub\t%0, %1, %2"
+  "@\n\tsub\t%0, %1, %2\n\tsubi\t%0, %1, %2"
   [(set_attr "length" "3,4")])
 
 (define_insn "andsi3"
@@ -49,7 +55,7 @@
         (and:SI (match_operand:SI 1 "register_operand" "r,r")
                 (match_operand:SI 2 "nonmemory_operand" "r,I")))]
   ""
-  "and\t%0, %1, %2"
+  "@\n\tand\t%0, %1, %2\n\tandi\t%0, %1, %2"
   [(set_attr "length" "3,4")])
 
 (define_insn "iorsi3"
@@ -57,7 +63,7 @@
         (ior:SI (match_operand:SI 1 "register_operand" "r,r")
                 (match_operand:SI 2 "nonmemory_operand" "r,I")))]
   ""
-  "or\t%0, %1, %2"
+  "@\n\tor\t%0, %1, %2\n\tori\t%0, %1, %2"
   [(set_attr "length" "3,4")])
 
 (define_insn "xorsi3"
@@ -65,7 +71,7 @@
         (xor:SI (match_operand:SI 1 "register_operand" "r,r")
                 (match_operand:SI 2 "nonmemory_operand" "r,I")))]
   ""
-  "xor\t%0, %1, %2"
+  "@\n\txor\t%0, %1, %2\n\txori\t%0, %1, %2"
   [(set_attr "length" "3,4")])
 
 (define_insn "ashlsi3"
@@ -73,7 +79,7 @@
         (ashift:SI (match_operand:SI 1 "register_operand" "r,r")
                    (match_operand:SI 2 "nonmemory_operand" "r,I")))]
   ""
-  "lsl\t%0, %1, %2"
+  "@\n\tlsl\t%0, %1, %2\n\tlsli\t%0, %1, %2"
   [(set_attr "length" "3,4")])
 
 (define_insn "lshrsi3"
@@ -81,7 +87,7 @@
         (lshiftrt:SI (match_operand:SI 1 "register_operand" "r,r")
                      (match_operand:SI 2 "nonmemory_operand" "r,I")))]
   ""
-  "lsr\t%0, %1, %2"
+  "@\n\tlsr\t%0, %1, %2\n\tlsri\t%0, %1, %2"
   [(set_attr "length" "3,4")])
 
 (define_insn "ashrsi3"
@@ -89,62 +95,29 @@
         (ashiftrt:SI (match_operand:SI 1 "register_operand" "r,r")
                      (match_operand:SI 2 "nonmemory_operand" "r,I")))]
   ""
-  "asr\t%0, %1, %2"
+  "@\n\tasr\t%0, %1, %2\n\tasri\t%0, %1, %2"
   [(set_attr "length" "3,4")])
 
-;; r15 is ordinary storage outside the compare/branch window.  A compare therefore
-;; explicitly clobbers it rather than globally reserving it.
 (define_insn "cmpsi"
   [(set (reg:CC CMP_REG)
-        (compare:CC (match_operand:SI 0 "register_operand" "r,r")
-                    (match_operand:SI 1 "nonmemory_operand" "r,I")))
-   (clobber (reg:SI CMP_REG))]
+        (compare:CC (match_operand:SI 0 "register_operand" "r")
+                    (match_operand:SI 1 "nonmemory_operand" "rI")))]
   ""
   "cmp\t%0, %1"
-  [(set_attr "length" "3,4")])
+  [(set_attr "length" "3")])
 
-(define_expand "cbranchsi4"
-  [(set (pc)
-        (if_then_else
-          (match_operator 0 "ordered_comparison_operator"
-            [(match_operand:SI 1 "register_operand")
-             (match_operand:SI 2 "nonmemory_operand")])
-          (label_ref (match_operand 3 ""))
-          (pc)))]
-  ""
-{
-  emit_insn (gen_cmpsi (operands[1], operands[2]));
-  rtx cc = gen_rtx_REG (CCmode, CMP_REG);
-  rtx cond = gen_rtx_fmt_ee (GET_CODE (operands[0]), VOIDmode, cc, const0_rtx);
-  emit_jump_insn (gen_dynphony_branch (cond, operands[3]));
-  DONE;
-})
-
-(define_insn "dynphony_branch"
+(define_insn "cbranchsi4"
   [(set (pc)
         (if_then_else
           (match_operator 0 "comparison_operator"
-            [(reg:CC CMP_REG) (const_int 0)])
-          (label_ref (match_operand 1 "" ""))
-          (pc)))]
+            [(match_operand:SI 1 "register_operand" "r")
+             (match_operand:SI 2 "nonmemory_operand" "rI")])
+          (label_ref (match_operand 3 "" ""))
+          (pc)))
+   (clobber (reg:SI CMP_REG))]
   ""
-{
-  switch (GET_CODE (operands[0]))
-    {
-    case EQ:  return "je\t%l1";
-    case NE:  return "jne\t%l1";
-    case LT:  return "jl\t%l1";
-    case LE:  return "jle\t%l1";
-    case GT:  return "jg\t%l1";
-    case GE:  return "jge\t%l1";
-    case LTU: return "jb\t%l1";
-    case LEU: return "jbe\t%l1";
-    case GTU: return "ja\t%l1";
-    case GEU: return "jae\t%l1";
-    default: gcc_unreachable ();
-    }
-}
-  [(set_attr "length" "4")])
+  "cmp\t%1, %2\n\tb%0\t%l3"
+  [(set_attr "length" "7")])
 
 (define_insn "jump"
   [(set (pc) (label_ref (match_operand 0 "" "")))]
@@ -190,4 +163,4 @@
   "ret"
   [(set_attr "length" "10")])
 
-(define_attr "length" "1,2,3,4,10,16" (const_int 3))
+(define_attr "length" "" (const_int 3))

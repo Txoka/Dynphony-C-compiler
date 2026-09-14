@@ -82,6 +82,9 @@ typedef struct dynphony_args
   unsigned int words;
 } CUMULATIVE_ARGS;
 
+#define INIT_CUMULATIVE_ARGS(CUM, FNTYPE, LIBNAME, FNDECL, N_NAMED_ARGS) \
+  ((CUM).words = 0)
+
 #define FUNCTION_ARG_REGNO_P(N) ((N) >= 1 && (N) <= 6)
 
 #define REGNO_REG_CLASS(R) GENERAL_REGS

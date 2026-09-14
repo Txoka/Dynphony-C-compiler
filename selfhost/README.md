@@ -89,7 +89,7 @@ loop forms and loop control, runtime arithmetic/comparison/logical expressions,
 and direct device intrinsics. Multiplication and unsigned division are expanded
 into software instruction sequences. It is intentionally unoptimized and uses
 correctness-first stack frames. Scalar functions, forward prototypes, nested
-calls, and recursion use the normal Dynphony ABI. The first six scalar
+calls, and recursion use the normal Dynphony ABI. The first seven scalar
 arguments use registers and additional arguments use the caller's stack.
 Aggregate arguments and returns are subsequent bootstrap layers.
 

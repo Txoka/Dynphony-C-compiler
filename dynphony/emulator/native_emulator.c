@@ -628,8 +628,8 @@ L_CMP_RI:  s.comparison_valid = 1; s.comparison_a = s.regs[d->b]; s.comparison_b
 
 #define BR_R(label, cond) label: REQUIRE_CMP(); next = (cond) ? s.regs[d->c] : d->next_pc; FINISH_INSN(next)
 #define BR_I(label, cond) label: REQUIRE_CMP(); next = (cond) ? d->imm       : d->next_pc; FINISH_INSN(next)
-        BR_R(L_JEQ_R,  s.comparison_a == s.comparison_b);
-        BR_R(L_JNE_R,  s.comparison_a != s.comparison_b);
+L_JEQ_R: next = (s.comparison_valid ? s.comparison_a == s.comparison_b : (s.regs[15] & 1u) != 0u) ? s.regs[d->c] : d->next_pc; FINISH_INSN(next);
+L_JNE_R: next = (s.comparison_valid ? s.comparison_a != s.comparison_b : (s.regs[15] & 1u) == 0u) ? s.regs[d->c] : d->next_pc; FINISH_INSN(next);
         BR_R(L_JLTU_R, s.comparison_a <  s.comparison_b);
         BR_R(L_JGEU_R, s.comparison_a >= s.comparison_b);
         BR_R(L_JLEU_R, s.comparison_a <= s.comparison_b);
@@ -639,8 +639,8 @@ L_CMP_RI:  s.comparison_valid = 1; s.comparison_a = s.regs[d->b]; s.comparison_b
         BR_R(L_JLES_R, (int32_t)s.comparison_a <= (int32_t)s.comparison_b);
         BR_R(L_JGTS_R, (int32_t)s.comparison_a >  (int32_t)s.comparison_b);
 L_JMP_R: next = s.regs[d->c]; FINISH_INSN(next);
-        BR_I(L_JEQ_I,  s.comparison_a == s.comparison_b);
-        BR_I(L_JNE_I,  s.comparison_a != s.comparison_b);
+L_JEQ_I: next = (s.comparison_valid ? s.comparison_a == s.comparison_b : (s.regs[15] & 1u) != 0u) ? d->imm : d->next_pc; FINISH_INSN(next);
+L_JNE_I: next = (s.comparison_valid ? s.comparison_a != s.comparison_b : (s.regs[15] & 1u) == 0u) ? d->imm : d->next_pc; FINISH_INSN(next);
         BR_I(L_JLTU_I, s.comparison_a <  s.comparison_b);
         BR_I(L_JGEU_I, s.comparison_a >= s.comparison_b);
         BR_I(L_JLEU_I, s.comparison_a <= s.comparison_b);
@@ -701,10 +701,14 @@ dispatch:
 
 #define SW_BR_R(u, cond) case u: REQUIRE_CMP(); next=(cond)?s.regs[d->c]:d->next_pc; FINISH_INSN(next)
 #define SW_BR_I(u, cond) case u: REQUIRE_CMP(); next=(cond)?d->imm:d->next_pc; FINISH_INSN(next)
-            SW_BR_R(U_JEQ_R,s.comparison_a==s.comparison_b); SW_BR_R(U_JNE_R,s.comparison_a!=s.comparison_b); SW_BR_R(U_JLTU_R,s.comparison_a<s.comparison_b); SW_BR_R(U_JGEU_R,s.comparison_a>=s.comparison_b); SW_BR_R(U_JLEU_R,s.comparison_a<=s.comparison_b); SW_BR_R(U_JGTU_R,s.comparison_a>s.comparison_b);
+            case U_JEQ_R: next=(s.comparison_valid?s.comparison_a==s.comparison_b:(s.regs[15]&1u)!=0u)?s.regs[d->c]:d->next_pc;FINISH_INSN(next);
+            case U_JNE_R: next=(s.comparison_valid?s.comparison_a!=s.comparison_b:(s.regs[15]&1u)==0u)?s.regs[d->c]:d->next_pc;FINISH_INSN(next);
+            SW_BR_R(U_JLTU_R,s.comparison_a<s.comparison_b); SW_BR_R(U_JGEU_R,s.comparison_a>=s.comparison_b); SW_BR_R(U_JLEU_R,s.comparison_a<=s.comparison_b); SW_BR_R(U_JGTU_R,s.comparison_a>s.comparison_b);
             SW_BR_R(U_JLTS_R,(int32_t)s.comparison_a<(int32_t)s.comparison_b); SW_BR_R(U_JGES_R,(int32_t)s.comparison_a>=(int32_t)s.comparison_b); SW_BR_R(U_JLES_R,(int32_t)s.comparison_a<=(int32_t)s.comparison_b); SW_BR_R(U_JGTS_R,(int32_t)s.comparison_a>(int32_t)s.comparison_b);
             case U_JMP_R: next=s.regs[d->c]; FINISH_INSN(next);
-            SW_BR_I(U_JEQ_I,s.comparison_a==s.comparison_b); SW_BR_I(U_JNE_I,s.comparison_a!=s.comparison_b); SW_BR_I(U_JLTU_I,s.comparison_a<s.comparison_b); SW_BR_I(U_JGEU_I,s.comparison_a>=s.comparison_b); SW_BR_I(U_JLEU_I,s.comparison_a<=s.comparison_b); SW_BR_I(U_JGTU_I,s.comparison_a>s.comparison_b);
+            case U_JEQ_I: next=(s.comparison_valid?s.comparison_a==s.comparison_b:(s.regs[15]&1u)!=0u)?d->imm:d->next_pc;FINISH_INSN(next);
+            case U_JNE_I: next=(s.comparison_valid?s.comparison_a!=s.comparison_b:(s.regs[15]&1u)==0u)?d->imm:d->next_pc;FINISH_INSN(next);
+            SW_BR_I(U_JLTU_I,s.comparison_a<s.comparison_b); SW_BR_I(U_JGEU_I,s.comparison_a>=s.comparison_b); SW_BR_I(U_JLEU_I,s.comparison_a<=s.comparison_b); SW_BR_I(U_JGTU_I,s.comparison_a>s.comparison_b);
             SW_BR_I(U_JLTS_I,(int32_t)s.comparison_a<(int32_t)s.comparison_b); SW_BR_I(U_JGES_I,(int32_t)s.comparison_a>=(int32_t)s.comparison_b); SW_BR_I(U_JLES_I,(int32_t)s.comparison_a<=(int32_t)s.comparison_b); SW_BR_I(U_JGTS_I,(int32_t)s.comparison_a>(int32_t)s.comparison_b);
             case U_JMP_I: next=d->imm; FINISH_INSN(next);
 #undef SW_BR_R

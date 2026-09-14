@@ -42,10 +42,10 @@ class Assembler:
         self.code.extend(data)
 
     def _call_bytes(self, target, immediate=False):
-        return isa.call(
+        return isa.link_call(
             target,
             immediate,
-            return_offset=20 if self.target.fixed_instruction_width else None,
+            return_offset=12 if self.target.fixed_instruction_width else None,
         )
 
     def call_register(self, register):
@@ -62,29 +62,35 @@ class Assembler:
         if self.target.pic:
             self.emit(isa.alu("add", register, ABI.pic_base_register, register))
 
-    def branch(self, op, label):
+    def branch(self, op, label, scratch=None):
+        scratch = ABI.scratch_register if scratch is None else scratch
         if not self.target.pic:
             old_size = 16 if self.target.fixed_instruction_width else 15
-            self.control_fixups.append((len(self.code), "branch", op, label, old_size))
+            self.control_fixups.append(
+                (len(self.code), "branch", op, label, old_size, scratch)
+            )
             self.emit(
-                isa.constant(ABI.scratch_register, 0)
-                + isa.jump("jmp", ABI.scratch_register)
+                isa.constant(scratch, 0)
+                + isa.jump("jmp", scratch)
             )
             return
-        self.address(ABI.scratch_register, label)
-        self.emit(isa.jump(op, ABI.scratch_register))
+        self.address(scratch, label)
+        self.emit(isa.jump(op, scratch))
 
     def call(self, label):
         if not self.target.pic:
-            old_size = 32 if self.target.fixed_instruction_width else 28
-            self.control_fixups.append((len(self.code), "call", None, label, old_size))
+            old_size = 24 if self.target.fixed_instruction_width else 21
+            self.control_fixups.append(
+                (len(self.code), "call", None, label, old_size,
+                 ABI.call_target_register)
+            )
             self.emit(
-                isa.constant(ABI.scratch_register, 0)
-                + self._call_bytes(ABI.scratch_register)
+                isa.constant(ABI.call_target_register, 0)
+                + self._call_bytes(ABI.call_target_register)
             )
             return
-        self.address(ABI.scratch_register, label)
-        self.call_register(ABI.scratch_register)
+        self.address(ABI.call_target_register, label)
+        self.call_register(ABI.call_target_register)
 
     def relax_controls(self):
         """Shrink symbolic fixed-address branches/calls after final layout."""
@@ -92,24 +98,24 @@ class Assembler:
             return
         choices = {
             offset: old_size
-            for offset, _, _, _, old_size in self.control_fixups
+            for offset, _, _, _, old_size, _ in self.control_fixups
         }
 
         def translated(position):
             return position - sum(
                 old_size - choices[offset]
-                for offset, _, _, _, old_size in self.control_fixups
+                for offset, _, _, _, old_size, _ in self.control_fixups
                 if offset < position
             )
 
         while True:
             changed = False
-            for offset, kind, _, label, old_size in self.control_fixups:
+            for offset, kind, _, label, old_size, _ in self.control_fixups:
                 if label not in self.labels:
                     raise CompileError(f"undefined symbol: {label}")
                 target = self.target.load_address + translated(self.labels[label])
                 size = (
-                    4 if kind == "branch" else (20 if self.target.fixed_instruction_width else 17)
+                    4 if kind == "branch" else (12 if self.target.fixed_instruction_width else 10)
                 ) if target <= 0xFFFF else old_size
                 if choices[offset] != size:
                     choices[offset] = size
@@ -120,18 +126,18 @@ class Assembler:
         original = bytes(self.code)
         rebuilt = bytearray()
         cursor = 0
-        for offset, kind, op, label, old_size in sorted(self.control_fixups):
+        for offset, kind, op, label, old_size, scratch in sorted(self.control_fixups):
             rebuilt.extend(original[cursor:offset])
             target = self.target.load_address + translated(self.labels[label])
             if kind == "branch":
                 selected = (isa.jump(op, target, True) if target <= 0xFFFF
-                            else isa.constant(ABI.scratch_register, target)
-                            + isa.jump(op, ABI.scratch_register))
+                            else isa.constant(scratch, target)
+                            + isa.jump(op, scratch))
                 rebuilt.extend(self._padded(selected))
             else:
                 selected = (self._call_bytes(target, True) if target <= 0xFFFF
-                            else isa.constant(ABI.scratch_register, target)
-                            + self._call_bytes(ABI.scratch_register))
+                            else isa.constant(scratch, target)
+                            + self._call_bytes(scratch))
                 rebuilt.extend(self._padded(selected))
             cursor = offset + old_size
         rebuilt.extend(original[cursor:])

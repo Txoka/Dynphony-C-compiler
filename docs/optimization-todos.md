@@ -97,7 +97,7 @@ Remaining work, in dependency and payoff order:
 - [ ] Defer guarded multi-target function-pointer devirtualization. Continue using
   conservative address-taken reachability when a singleton target cannot be proven.
 - [ ] Defer PIC startup self-relocation. If implemented later, place it behind an
-  explicit non-default option and benchmark it against the current `r13`
+  explicit non-default option and benchmark it against the current `r12`
   base-relative sequences. Dynphony branches are absolute, not PC-relative, so
   code branch sites are candidates too. Patch sites must retain fixed width;
   account for the relocation table, patching code, startup time, program reentry,

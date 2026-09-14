@@ -115,7 +115,7 @@ are documented in [docs/c-language-support.md](docs/c-language-support.md).
 - Conditional 96×40 ASCII text-screen support through literal-format `printf`,
   `screen_framebuffer`, and `screen_cursor`.
 - `if`/`else`, `while`, `for`, `do`/`while`, `break`, `continue`.
-- Functions, direct/indirect calls, recursion, and returns. The first six scalar arguments use registers; later scalar arguments are passed on the stack.
+- Functions, direct/indirect calls, recursion, and returns. The first seven scalar arguments use registers; later scalar arguments are passed on the stack.
 - Fixed-size and multidimensional arrays, inferred outer array bounds, brace/string initializers, array indexing/decay, pointer scaling/difference, dereference, and address-of.
 - Zero-filled globals, partially initialized arrays, integer constant initializers, and symbolic pointer initializers such as `int *p = &a[2]`.
 - Software multiplication and signed/unsigned division/remainder. Division is bounded to 32 iterations, including for large unsigned divisors.
@@ -136,15 +136,30 @@ Entry must be `int main(void)` or `int main()`. In this version, an empty parame
 | `char` / `short` / `int` / `long` | 1 / 2 / 4 / 4 bytes |
 | Pointers | 4 bytes |
 | Object alignment | Natural, capped at 4 bytes |
-| Arguments / return | first six in `r1`–`r6`, later arguments on stack / `r1` |
+| Arguments | first seven in `r1`–`r7`, later arguments on stack |
+| Results | `flags`, `r1`–`r7`; scalar C results use `r1` |
 | Caller-saved | `r1`–`r7`, `flags` |
-| Callee-saved | `r8`–`r13` |
+| Callee-saved | `r8`–`r12` |
+| Link register | `r13` |
 | Stack | `sp = 0` at startup, downward, 4-byte aligned |
 | RAM | Unified; addresses wrap modulo configured power-of-two size |
 | Default RAM / load address | 16 MiB / 0 |
 | Termination | Infinite jump loop; main's result remains in `r1` |
 
-`r12` is the frame pointer when a function needs a stack frame. Such functions save and restore it; frame-free leaf functions leave it alone and omit that prologue and epilogue work. `r8`–`r11` remain untouched. In PIC mode, startup obtains the image base in `r13` using `counter` at image offset zero; functions leave it unchanged. The `_start` IR root initializes `sp` when reachable code can use the stack; the optimizer removes that operation from fully stack-free images.
+Calls place the continuation address in `r13`; leaf functions return with a
+single `jmp r13`. A function that still contains a non-tail call after the
+whole-program optimization fixed point saves its incoming `r13` once and
+restores it before returning. `r11` is the frame pointer when a function needs
+a stack frame. In PIC mode startup obtains the image base in `r12` using
+`counter` at image offset zero and generated functions preserve it; fixed-address
+builds make `r12` available to the allocator. The `_start` IR root initializes
+`sp` when reachable code can use the stack; the optimizer removes that operation
+from fully stack-free images.
+
+Fallible ABI functions return zero in `flags` on success and an odd status code
+on error, allowing `je` to branch directly to an error path. Other functions may
+clobber `flags`. The ABI permits multiple word results in `r1`–`r7`; the current
+C language subset produces one scalar result in `r1`.
 
 Large constants and all label addresses use fixed-width materialization, avoiding a 64 KiB code/address limit. PIC addresses add the runtime base. Startup initializes pointer-valued globals from symbol offsets on every entry; it never repeatedly adds a base to previously rebased values. Other mutable globals are not reset on reentry unless the image is reloaded.
 
@@ -226,9 +241,12 @@ The optimizer currently applies safe local and whole-program reductions:
 - Comparisons used only by a branch remain in flags and branch directly, without constructing, spilling, and retesting a Boolean value.
 - Instructions after an unconditional transfer are removed through the next block boundary. Jumps are threaded through forwarding blocks, jumps to any immediately following label are removed, and conditional branches use the following block as fallthrough.
 - Startup is represented by the `_start` IR root. Functions and software arithmetic helpers unreachable from it, calls, function pointers, or static relocations are omitted.
-- Functions without locals, parameters, or live computed stack values omit the `r12` frame-pointer save/restore.
+- Functions without locals, parameters, or live computed stack values omit the `r11` frame-pointer save/restore.
 - Read-only parameters whose addresses are never taken become ordinary IR values. A local register allocator keeps straight-line leaf expressions in `r1`–`r7`, preferring their incoming argument registers. For example, `int add(int a, int b) { return a + b; }` begins with `add r1, r1, r2` and needs no frame.
-- Functions with control flow assign up to four frequently used values to `r8`–`r11`. Each function saves and restores only the callee-saved registers it actually uses, so those values survive calls and loop backedges.
+- Functions with control flow assign frequently used values to `r8`–`r10` and,
+  for fixed-address images, `r12`. Each function saves and restores only the
+  callee-saved registers it actually uses, so those values survive calls and
+  loop backedges. PIC images reserve `r12` instead.
 - Values that die at a call can use `r3`–`r6` without save/restore traffic. Call arguments are placed as a parallel assignment, including register-cycle breaking and a safe mixed-source fallback.
 - A global Tier 1 fixed point alternates local/CFG simplification with call-graph reachability. Non-recursive functions with exactly one surviving direct call site are relocated into that site and their standalone body is deleted. This naturally absorbs `main` into `_start` when possible.
 - Known-symbol calls use explicit direct-call IR, while function-pointer calls remain indirect. This gives reachability, inlining, and tail-call analysis the callee symbol directly.

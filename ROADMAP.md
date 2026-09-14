@@ -102,11 +102,31 @@ optional optimization, and therefore belong in earlier phases.
 - [ ] Immediate selection, constant materialization, algebraic identities, and
   power-of-two strength reduction.
 - [ ] Stack-slot promotion, liveness, register allocation, and call-aware spills.
+- [ ] Replace the SSA-like linear value IR with persistent block-form SSA:
+  explicit basic blocks, dominators and dominance frontiers, phi insertion,
+  non-escaping local promotion, SSA verification, and edge-based parallel-copy
+  destruction before ABI lowering.
+- [ ] Move SCCP onto persistent SSA, then add global value numbering/CSE,
+  inter-block dead-code elimination, loop discovery, and loop-invariant code
+  motion. Keep loads, stores, and calls as explicit ordered effects initially;
+  defer Memory SSA until alias analysis can justify it.
+- [ ] Represent ABI calls and returns as multi-result IR operations so aggregate
+  lowering can use `r1`–`r7` and fallible library declarations can expose the
+  independent `flags` status result without assigning hardware registers before
+  ABI lowering.
 - [ ] Direct calls, safe inlining, tail calls, whole-program reachability, and
   interprocedural constant propagation.
 - [ ] Branch relaxation and final image-size optimization.
 - [ ] Compare stage 2/stage 3 again after each optimization family to protect
   deterministic self-hosting.
+
+Persistent SSA is a **high-difficulty** self-hosting milestone. The Python
+compiler already has immutable virtual values and transient SSA/phi construction
+inside SCCP, so its conversion is medium difficulty. The self-hosted compiler
+still needs a real block IR, graph storage, dominator construction, phi operand
+management, verification, and deterministic SSA destruction; implementing and
+bootstrapping those pieces is high difficulty. Memory SSA is a separate high-risk
+extension and is not a prerequisite for the scalar optimization work above.
 
 ## Phase 6 — native in-machine development loop
 

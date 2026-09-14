@@ -86,7 +86,10 @@ typedef struct {
 
     uint8_t *memory;
     uint8_t *persistent;
-    uint32_t regs[16];
+    /* Slot 16 is the sink for writes to zr: destination 0 is redirected there,
+     * so reads of regs[0] always see zero without branching on every write.
+     * Sized to a power of two to keep the surrounding struct layout aligned. */
+    uint32_t regs[32];
     uint32_t mask;
     uint32_t persistent_mask;
     uint32_t pc;
@@ -338,6 +341,11 @@ static inline void invalidate_decode(State *s, uint32_t address, unsigned size) 
     }
 }
 
+/* Writes to zr go to the sink slot, so zr always reads zero. */
+static inline uint8_t dst(uint8_t r) {
+    return r ? r : 16u;
+}
+
 static int decode_instruction(State *s, uint32_t pc, Decoded *d) {
     const uint8_t *m = s->memory;
     const uint32_t mask = s->mask;
@@ -353,13 +361,9 @@ static int decode_instruction(State *s, uint32_t pc, Decoded *d) {
     if (op == 0x00) {
         d->uop = U_NOP;
         d->next_pc = DYN_NEXT_PC(pc, 1u);
-    } else if (op == 0x08) {
-        /* The run loop treats a stationary PC as a halted machine. */
-        d->uop = U_NOP;
-        d->next_pc = pc;
     } else if (op == 0x01) {
         d->uop = U_IN;
-        d->a = mem8(m, mask, pc + 1u) >> 4;
+        d->a = dst(mem8(m, mask, pc + 1u) >> 4);
         d->next_pc = DYN_NEXT_PC(pc, 2u);
     } else if (op == 0x02) {
         d->uop = U_OUT_R;
@@ -371,7 +375,7 @@ static int decode_instruction(State *s, uint32_t pc, Decoded *d) {
         d->next_pc = DYN_NEXT_PC(pc, 4u);
     } else if (op == 0x03) {
         d->uop = U_KEY;
-        d->a = mem8(m, mask, pc + 1u) >> 4;
+        d->a = dst(mem8(m, mask, pc + 1u) >> 4);
         d->next_pc = DYN_NEXT_PC(pc, 2u);
     } else if (op == 0x04) {
         d->uop = U_SCREEN_R;
@@ -385,19 +389,19 @@ static int decode_instruction(State *s, uint32_t pc, Decoded *d) {
         d->next_pc = DYN_NEXT_PC(pc, 4u);
     } else if (op == 0x05) {
         d->uop = U_TIME_LO;
-        d->a = mem8(m, mask, pc + 1u) >> 4;
+        d->a = dst(mem8(m, mask, pc + 1u) >> 4);
         d->next_pc = DYN_NEXT_PC(pc, 2u);
     } else if (op == 0x06) {
         d->uop = U_TIME_HI;
-        d->a = mem8(m, mask, pc + 1u) >> 4;
+        d->a = dst(mem8(m, mask, pc + 1u) >> 4);
         d->next_pc = DYN_NEXT_PC(pc, 2u);
     } else if (op == 0x07) {
         d->uop = U_GETPC;
-        d->a = mem8(m, mask, pc + 1u) >> 4;
+        d->a = dst(mem8(m, mask, pc + 1u) >> 4);
         d->next_pc = DYN_NEXT_PC(pc, 2u);
     } else if (op >= 0x20 && op <= 0x3a && (op & 15u) <= 10u) {
         x = mem8(m, mask, pc + 1u);
-        d->a = x >> 4;       /* dst */
+        d->a = dst(x >> 4);  /* dst */
         d->b = x & 15u;      /* lhs */
         code = op & 15u;
         immediate = (op & 16u) != 0;
@@ -428,7 +432,8 @@ static int decode_instruction(State *s, uint32_t pc, Decoded *d) {
         immediate = (op & 16u) != 0;
         code = op & 7u;
         x = mem8(m, mask, pc + 1u);
-        d->a = (code < 4u) ? (x >> 4) : (x & 15u); /* load dst / store src */
+        /* Loads write their destination; stores only read their source. */
+        d->a = (code < 4u) ? dst(x >> 4) : (x & 15u);
         if (immediate) {
             d->imm = mem16be(m, mask, pc + 2u);
             d->uop = (uint8_t)(U_LOAD8_I + code);
@@ -490,7 +495,6 @@ static PyObject *run_chunk(PyObject *self, PyObject *args) {
 
 #define FINISH_INSN(newpc) do { \
     uint32_t _np = (uint32_t)(newpc); \
-    s.regs[0] = 0; \
     s.pc = _np; \
     ++s.steps; \
     if (DYN_UNLIKELY(s.pc == previous)) { stopped = 1; goto done; } \

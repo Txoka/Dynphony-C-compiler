@@ -1,8 +1,10 @@
 """Small independent byte decoder for the instruction subset emitted by scc.
 
-Comparisons use an internal relation model because the full hardware flag layout
-is not specified. When no comparison is pending, ``je`` and ``jne`` interpret the
-documented low status bit directly so fallible ABI calls can branch on return.
+Comparisons and branches follow the hardware model literally: ``cmp`` is an
+ordinary ALU operation whose result is the three-bit flag word (see ``flags``),
+written to whatever register the encoding names, and a jump reads that word back
+out of a register. Neither is special-cased, so an unconventional encoding
+behaves exactly as the bits say it should.
 """
 
 from collections import deque
@@ -14,6 +16,21 @@ MASK = 0xFFFFFFFF
 
 def signed(value):
     return value - 2**32 if value & 0x80000000 else value
+
+
+def flags(a, b):
+    """Pack the three-bit comparison word: equals, lower (unsigned), less (signed)."""
+    return (a == b) | ((a < b) << 1) | ((signed(a) < signed(b)) << 2)
+
+
+class Registers(list):
+    """The register file. ``zr`` reads as zero because writes to it are dropped."""
+
+    __slots__ = ()
+
+    def __setitem__(self, index, value):
+        if index:
+            list.__setitem__(self, index, value)
 
 
 class Machine:
@@ -38,10 +55,9 @@ class Machine:
             raise ValueError("image does not fit contiguously in RAM")
         self.memory = bytearray(ram_size)
         self.mask = ram_size - 1
-        self.regs = [0] * 16
+        self.regs = Registers([0] * 16)
         self.pc = load_address
         self.steps = 0
-        self.comparison = None
         self.inputs = deque(value & MASK for value in inputs)
         self.keyboard_inputs = deque(value & MASK for value in keyboard_inputs)
         self.outputs = []
@@ -124,8 +140,6 @@ class Machine:
         elif op == 7:
             destination = self.read(pc + 1, 1) >> 4
             r[destination] = pc
-            if destination == 15:
-                self.comparison = None
             next_pc = pc + 2
         elif 0x20 <= op <= 0x3A and (op & 15) <= 10:
             pair = self.read(pc + 1, 1)
@@ -135,60 +149,30 @@ class Machine:
             a = r[left]
             code = op & 15
             next_pc = pc + (4 if immediate else 3)
-            if code == 10:
-                # CMP is encoded like every other ALU operation.  The ISA
-                # convention is that its destination is r15 (the flags
-                # register); an incorrectly encoded CMP therefore does not
-                # replace the pending comparison used by branches.
-                if dst == 15:
-                    self.comparison = (a, right)
-                r[dst] = 0
-            else:
-                operations = {
-                    0: lambda: ~(a & right),
-                    1: lambda: a | right,
-                    2: lambda: a & right,
-                    3: lambda: ~(a | right),
-                    4: lambda: a + right,
-                    5: lambda: a - right,
-                    6: lambda: a ^ right,
-                    7: lambda: (a << right) if right < 32 else 0,
-                    8: lambda: (a >> right) if right < 32 else 0,
-                    9: lambda: (signed(a) >> min(right, 32)),
-                }
-                r[dst] = operations[code]() & MASK
-                if dst == 15:
-                    self.comparison = None
+            operations = {
+                0: lambda: ~(a & right),
+                1: lambda: a | right,
+                2: lambda: a & right,
+                3: lambda: ~(a | right),
+                4: lambda: a + right,
+                5: lambda: a - right,
+                6: lambda: a ^ right,
+                7: lambda: (a << right) if right < 32 else 0,
+                8: lambda: (a >> right) if right < 32 else 0,
+                9: lambda: (signed(a) >> min(right, 32)),
+                10: lambda: flags(a, right),
+            }
+            r[dst] = operations[code]() & MASK
         elif 0x40 <= op <= 0x5F:
             immediate = bool(op & 16)
-            base = op & 0xEF
             target = self.read(pc + 2, 2) if immediate else r[self.read(pc + 2, 1) & 15]
             next_pc = pc + (4 if immediate else 3)
-            if base == 0x48:
-                take = True
-            else:
-                if self.comparison is None:
-                    if base not in (0x41, 0x49):
-                        raise RuntimeError("conditional branch without comparison")
-                    error = bool(r[15] & 1)
-                    take = error if base == 0x41 else not error
-                else:
-                    a, b = self.comparison
-                    conditions = {
-                        0x41: a == b,
-                        0x49: a != b,
-                        0x42: a < b,
-                        0x4A: a >= b,
-                        0x43: a <= b,
-                        0x4B: a > b,
-                        0x44: signed(a) < signed(b),
-                        0x4C: signed(a) >= signed(b),
-                        0x45: signed(a) <= signed(b),
-                        0x4D: signed(a) > signed(b),
-                    }
-                    if base not in conditions:
-                        raise RuntimeError(f"unknown branch {op:#x}")
-                    take = conditions[base]
+            # The condition is the opcode's low nibble applied to the flag
+            # register named by the second byte: mask the three condition bits
+            # against the flags, reduce with OR, then invert if bit 3 is set.
+            condition = op & 15
+            source = r[self.read(pc + 1, 1) & 15]
+            take = bool(condition & source & 7) ^ bool(condition & 8)
             if take:
                 next_pc = target
         elif 0x60 <= op <= 0x77:
@@ -206,36 +190,21 @@ class Machine:
             elif code < 4:
                 size = (1, 2, 4)[code]
                 r[operand >> 4] = self.read(address, size)
-                if operand >> 4 == 15:
-                    self.comparison = None
             else:
                 size = (1, 2, 4)[code & 3]
                 self.write(address, r[operand & 15], size)
         else:
             raise RuntimeError(f"unsupported opcode {op:#x} at {pc:#x}")
-        r[0] = 0
         self.pc = next_pc & MASK
         self.steps += 1
 
     def _step_symphony(self):
         pc = self.pc
-        op = self.read(pc, 1)
-        if op == 8:
-            self.regs[0] = 0
-            self.steps += 1
-            return
         Machine.step(self)
-        if op in (0,):
-            length = 1
-        elif op in (1, 3, 5, 6, 7):
-            length = 2
-        elif op in (0x12, 0x14):
-            length = 4
-        elif op in (2, 4) or 0x20 <= op <= 0x77:
-            length = 4 if op & 0x10 else 3
-        else:
-            return
-        if self.pc == (pc + length) & MASK:
+        # Every Symphony instruction occupies four bytes, so round up from the
+        # variable length ``step`` advanced by. A PC still inside this
+        # instruction's four bytes means it fell through rather than branched.
+        if 0 < (self.pc - pc) & MASK <= 4:
             self.pc = (pc + 4) & MASK
 
     def run(

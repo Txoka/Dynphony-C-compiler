@@ -1,0 +1,52 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip setuptools
+          python -m pip install -e .
+      - name: Check native emulator is available
+        run: |
+          python - <<'PY'
+          from symphony.emulator import native_available
+
+          missing = [name for name, symphony in (("dynphony", False), ("symphony", True))
+                     if not native_available(symphony)]
+          if missing:
+              raise SystemExit(f"native emulator missing for: {', '.join(missing)}")
+          PY
+      - name: Compiler and emulator tests (dynphony)
+        run: SYMPHONY_TEST_ISA=dynphony python -m unittest discover -s tests -v
+      - name: Compiler and emulator tests (symphony)
+        run: SYMPHONY_TEST_ISA=symphony python -m unittest discover -s tests -v
+      - name: Self-host tests (dynphony)
+        run: SYMPHONY_TEST_ISA=dynphony python -m unittest discover -s selfhost/tests -v
+      - name: Self-host tests (symphony)
+        run: SYMPHONY_TEST_ISA=symphony python -m unittest discover -s selfhost/tests -v

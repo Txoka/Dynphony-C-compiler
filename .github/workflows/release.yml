@@ -34,12 +34,26 @@ jobs:
                   f"tag {tag!r} does not match pyproject.toml version {version!r}"
               )
           PY
-      - name: Install and run tests
+      - name: Install
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
+      - name: Check native emulator is available
+        run: |
+          python - <<'PY'
+          from symphony.emulator import native_available
+
+          missing = [name for name, symphony in (("dynphony", False), ("symphony", True))
+                     if not native_available(symphony)]
+          if missing:
+              raise SystemExit(f"native emulator missing for: {', '.join(missing)}")
+          PY
+      - name: Run tests
+        run: |
           SYMPHONY_TEST_ISA=dynphony python -m unittest discover -s tests -v
           SYMPHONY_TEST_ISA=symphony python -m unittest discover -s tests -v
+          SYMPHONY_TEST_ISA=dynphony python -m unittest discover -s selfhost/tests -v
+          SYMPHONY_TEST_ISA=symphony python -m unittest discover -s selfhost/tests -v
 
   wheels:
     name: ${{ matrix.name }} wheels

@@ -50,11 +50,9 @@ typedef enum {
     U_XOR_RR, U_SHL_RR, U_SHR_RR, U_SAR_RR, U_CMP_RR,
     U_NAND_RI, U_OR_RI, U_AND_RI, U_NOR_RI, U_ADD_RI, U_SUB_RI,
     U_XOR_RI, U_SHL_RI, U_SHR_RI, U_SAR_RI, U_CMP_RI,
+    /* U_CMP_* stay adjacent to the ALU block: cmp is ALU code 10. */
 
-    U_JEQ_R, U_JNE_R, U_JLTU_R, U_JGEU_R, U_JLEU_R, U_JGTU_R,
-    U_JLTS_R, U_JGES_R, U_JLES_R, U_JGTS_R, U_JMP_R,
-    U_JEQ_I, U_JNE_I, U_JLTU_I, U_JGEU_I, U_JLEU_I, U_JGTU_I,
-    U_JLTS_I, U_JGES_I, U_JLES_I, U_JGTS_I, U_JMP_I,
+    U_BRANCH_R, U_BRANCH_I,
 
     U_LOAD8_R, U_LOAD16_R, U_LOAD32_R, U_PLOAD32_R,
     U_STORE8_R, U_STORE16_R, U_STORE32_R, U_PSTORE32_R,
@@ -84,20 +82,19 @@ typedef struct {
     PyObject *keyboard_inputs;       /* owned */
     PyObject *outputs;               /* owned */
     PyObject *screen_updates;        /* owned */
-    PyObject *comparison_obj;        /* owned */
     PyObject *persistent_obj;        /* owned */
 
     uint8_t *memory;
     uint8_t *persistent;
-    uint32_t regs[16];
+    /* Slot 16 is the sink for writes to zr: destination 0 is redirected there,
+     * so reads of regs[0] always see zero without branching on every write.
+     * Sized to a power of two to keep the surrounding struct layout aligned. */
+    uint32_t regs[32];
     uint32_t mask;
     uint32_t persistent_mask;
     uint32_t pc;
     uint64_t steps;
     uint64_t time_value;
-    int comparison_valid;
-    uint32_t comparison_a;
-    uint32_t comparison_b;
     int has_persistent;
 
     Decoded *decode;
@@ -195,7 +192,6 @@ static int load_state(State *s, PyObject *machine) {
     LOAD_OWNED(keyboard_inputs, "keyboard_inputs");
     LOAD_OWNED(outputs, "outputs");
     LOAD_OWNED(screen_updates, "screen_updates");
-    LOAD_OWNED(comparison_obj, "comparison");
     LOAD_OWNED(persistent_obj, "persistent");
 #undef LOAD_OWNED
 
@@ -237,17 +233,6 @@ static int load_state(State *s, PyObject *machine) {
     Py_DECREF(obj);
     if (PyErr_Occurred()) return -1;
 
-    if (s->comparison_obj != Py_None) {
-        if (!PyTuple_Check(s->comparison_obj) || PyTuple_GET_SIZE(s->comparison_obj) != 2) {
-            PyErr_SetString(PyExc_TypeError, "invalid machine comparison state");
-            return -1;
-        }
-        s->comparison_valid = 1;
-        s->comparison_a = (uint32_t)PyLong_AsUnsignedLongMask(PyTuple_GET_ITEM(s->comparison_obj, 0));
-        s->comparison_b = (uint32_t)PyLong_AsUnsignedLongMask(PyTuple_GET_ITEM(s->comparison_obj, 1));
-        if (PyErr_Occurred()) return -1;
-    }
-
     if (!PyByteArray_Check(s->persistent_obj)) {
         PyErr_SetString(PyExc_TypeError, "machine.persistent must be a bytearray");
         return -1;
@@ -287,7 +272,6 @@ static void release_state(State *s) {
     Py_XDECREF(s->keyboard_inputs);
     Py_XDECREF(s->outputs);
     Py_XDECREF(s->screen_updates);
-    Py_XDECREF(s->comparison_obj);
     Py_XDECREF(s->persistent_obj);
 }
 
@@ -302,7 +286,6 @@ static int set_attr_u64(PyObject *object, const char *name, uint64_t value) {
 
 static int sync_state(State *s) {
     PyObject *value = NULL;
-    PyObject *comparison = NULL;
     int i;
     for (i = 0; i < 16; ++i) {
         value = PyLong_FromUnsignedLong(s->regs[i]);
@@ -312,19 +295,6 @@ static int sync_state(State *s) {
     if (set_attr_u64(s->machine, "pc", s->pc) < 0 ||
         set_attr_u64(s->machine, "steps", s->steps) < 0)
         return -1;
-
-    if (s->comparison_valid) {
-        comparison = Py_BuildValue("(II)", s->comparison_a, s->comparison_b);
-        if (!comparison) return -1;
-    } else {
-        comparison = Py_None;
-        Py_INCREF(comparison);
-    }
-    if (PyObject_SetAttrString(s->machine, "comparison", comparison) < 0) {
-        Py_DECREF(comparison);
-        return -1;
-    }
-    Py_DECREF(comparison);
     return 0;
 }
 
@@ -371,11 +341,16 @@ static inline void invalidate_decode(State *s, uint32_t address, unsigned size) 
     }
 }
 
+/* Writes to zr go to the sink slot, so zr always reads zero. */
+static inline uint8_t dst(uint8_t r) {
+    return r ? r : 16u;
+}
+
 static int decode_instruction(State *s, uint32_t pc, Decoded *d) {
     const uint8_t *m = s->memory;
     const uint32_t mask = s->mask;
     uint8_t op = mem8(m, mask, pc);
-    uint8_t x, code, base;
+    uint8_t x, code;
     int immediate;
 
     memset(d, 0, sizeof(*d));
@@ -386,13 +361,9 @@ static int decode_instruction(State *s, uint32_t pc, Decoded *d) {
     if (op == 0x00) {
         d->uop = U_NOP;
         d->next_pc = DYN_NEXT_PC(pc, 1u);
-    } else if (op == 0x08) {
-        /* The run loop treats a stationary PC as a halted machine. */
-        d->uop = U_NOP;
-        d->next_pc = pc;
     } else if (op == 0x01) {
         d->uop = U_IN;
-        d->a = mem8(m, mask, pc + 1u) >> 4;
+        d->a = dst(mem8(m, mask, pc + 1u) >> 4);
         d->next_pc = DYN_NEXT_PC(pc, 2u);
     } else if (op == 0x02) {
         d->uop = U_OUT_R;
@@ -404,7 +375,7 @@ static int decode_instruction(State *s, uint32_t pc, Decoded *d) {
         d->next_pc = DYN_NEXT_PC(pc, 4u);
     } else if (op == 0x03) {
         d->uop = U_KEY;
-        d->a = mem8(m, mask, pc + 1u) >> 4;
+        d->a = dst(mem8(m, mask, pc + 1u) >> 4);
         d->next_pc = DYN_NEXT_PC(pc, 2u);
     } else if (op == 0x04) {
         d->uop = U_SCREEN_R;
@@ -418,19 +389,19 @@ static int decode_instruction(State *s, uint32_t pc, Decoded *d) {
         d->next_pc = DYN_NEXT_PC(pc, 4u);
     } else if (op == 0x05) {
         d->uop = U_TIME_LO;
-        d->a = mem8(m, mask, pc + 1u) >> 4;
+        d->a = dst(mem8(m, mask, pc + 1u) >> 4);
         d->next_pc = DYN_NEXT_PC(pc, 2u);
     } else if (op == 0x06) {
         d->uop = U_TIME_HI;
-        d->a = mem8(m, mask, pc + 1u) >> 4;
+        d->a = dst(mem8(m, mask, pc + 1u) >> 4);
         d->next_pc = DYN_NEXT_PC(pc, 2u);
     } else if (op == 0x07) {
         d->uop = U_GETPC;
-        d->a = mem8(m, mask, pc + 1u) >> 4;
+        d->a = dst(mem8(m, mask, pc + 1u) >> 4);
         d->next_pc = DYN_NEXT_PC(pc, 2u);
     } else if (op >= 0x20 && op <= 0x3a && (op & 15u) <= 10u) {
         x = mem8(m, mask, pc + 1u);
-        d->a = x >> 4;       /* dst */
+        d->a = dst(x >> 4);  /* dst */
         d->b = x & 15u;      /* lhs */
         code = op & 15u;
         immediate = (op & 16u) != 0;
@@ -445,33 +416,24 @@ static int decode_instruction(State *s, uint32_t pc, Decoded *d) {
         }
     } else if (op >= 0x40 && op <= 0x5f) {
         immediate = (op & 16u) != 0;
-        base = op & 0xefu;
+        /* Condition bits and the flag-source register, both read at execute time. */
+        d->b = (uint8_t)(op & 15u);
+        d->a = mem8(m, mask, pc + 1u) & 15u;
         if (immediate) {
             d->imm = mem16be(m, mask, pc + 2u);
+            d->uop = U_BRANCH_I;
             d->next_pc = DYN_NEXT_PC(pc, 4u);
         } else {
             d->c = mem8(m, mask, pc + 2u) & 15u;
+            d->uop = U_BRANCH_R;
             d->next_pc = DYN_NEXT_PC(pc, 3u);
-        }
-        switch (base) {
-            case 0x41: d->uop = immediate ? U_JEQ_I  : U_JEQ_R;  break;
-            case 0x49: d->uop = immediate ? U_JNE_I  : U_JNE_R;  break;
-            case 0x42: d->uop = immediate ? U_JLTU_I : U_JLTU_R; break;
-            case 0x4a: d->uop = immediate ? U_JGEU_I : U_JGEU_R; break;
-            case 0x43: d->uop = immediate ? U_JLEU_I : U_JLEU_R; break;
-            case 0x4b: d->uop = immediate ? U_JGTU_I : U_JGTU_R; break;
-            case 0x44: d->uop = immediate ? U_JLTS_I : U_JLTS_R; break;
-            case 0x4c: d->uop = immediate ? U_JGES_I : U_JGES_R; break;
-            case 0x45: d->uop = immediate ? U_JLES_I : U_JLES_R; break;
-            case 0x4d: d->uop = immediate ? U_JGTS_I : U_JGTS_R; break;
-            case 0x48: d->uop = immediate ? U_JMP_I  : U_JMP_R;  break;
-            default: break;
         }
     } else if (op >= 0x60 && op <= 0x77) {
         immediate = (op & 16u) != 0;
         code = op & 7u;
         x = mem8(m, mask, pc + 1u);
-        d->a = (code < 4u) ? (x >> 4) : (x & 15u); /* load dst / store src */
+        /* Loads write their destination; stores only read their source. */
+        d->a = (code < 4u) ? dst(x >> 4) : (x & 15u);
         if (immediate) {
             d->imm = mem16be(m, mask, pc + 2u);
             d->uop = (uint8_t)(U_LOAD8_I + code);
@@ -492,6 +454,13 @@ static inline Decoded *decoded_at(State *s, uint32_t pc) {
     if (DYN_UNLIKELY(!d->valid || d->pc_tag != pc))
         decode_instruction(s, pc, d);
     return d;
+}
+
+/* cmp's result word: bit0 equals, bit1 lower (unsigned), bit2 less (signed). */
+static inline uint32_t flags32(uint32_t a, uint32_t b) {
+    return (uint32_t)(a == b) |
+           ((uint32_t)(a < b) << 1) |
+           ((uint32_t)((int32_t)a < (int32_t)b) << 2);
 }
 
 static inline uint32_t sar32(uint32_t a, uint32_t b) {
@@ -526,7 +495,6 @@ static PyObject *run_chunk(PyObject *self, PyObject *args) {
 
 #define FINISH_INSN(newpc) do { \
     uint32_t _np = (uint32_t)(newpc); \
-    s.regs[0] = 0; \
     s.pc = _np; \
     ++s.steps; \
     if (DYN_UNLIKELY(s.pc == previous)) { stopped = 1; goto done; } \
@@ -537,12 +505,10 @@ static PyObject *run_chunk(PyObject *self, PyObject *args) {
     goto dispatch; \
 } while (0)
 
-#define REQUIRE_CMP() do { \
-    if (DYN_UNLIKELY(!s.comparison_valid)) { \
-        PyErr_SetString(PyExc_RuntimeError, "conditional branch without comparison"); \
-        error = 1; goto done; \
-    } \
-} while (0)
+/* Mask the condition bits against the named flag register, OR-reduce, then
+ * invert when condition bit 3 is set. */
+#define BRANCH_TAKEN(d) \
+    ((((d)->b & s.regs[(d)->a] & 7u) != 0u) ^ (((d)->b & 8u) != 0u))
 
 #define BAD_PERSISTENT() do { \
     if (DYN_UNLIKELY(!s.has_persistent)) { \
@@ -565,10 +531,7 @@ static PyObject *run_chunk(PyObject *self, PyObject *args) {
             &&L_XOR_RR, &&L_SHL_RR, &&L_SHR_RR, &&L_SAR_RR, &&L_CMP_RR,
             &&L_NAND_RI, &&L_OR_RI, &&L_AND_RI, &&L_NOR_RI, &&L_ADD_RI, &&L_SUB_RI,
             &&L_XOR_RI, &&L_SHL_RI, &&L_SHR_RI, &&L_SAR_RI, &&L_CMP_RI,
-            &&L_JEQ_R, &&L_JNE_R, &&L_JLTU_R, &&L_JGEU_R, &&L_JLEU_R, &&L_JGTU_R,
-            &&L_JLTS_R, &&L_JGES_R, &&L_JLES_R, &&L_JGTS_R, &&L_JMP_R,
-            &&L_JEQ_I, &&L_JNE_I, &&L_JLTU_I, &&L_JGEU_I, &&L_JLEU_I, &&L_JGTU_I,
-            &&L_JLTS_I, &&L_JGES_I, &&L_JLES_I, &&L_JGTS_I, &&L_JMP_I,
+            &&L_BRANCH_R, &&L_BRANCH_I,
             &&L_LOAD8_R, &&L_LOAD16_R, &&L_LOAD32_R, &&L_PLOAD32_R,
             &&L_STORE8_R, &&L_STORE16_R, &&L_STORE32_R, &&L_PSTORE32_R,
             &&L_LOAD8_I, &&L_LOAD16_I, &&L_LOAD32_I, &&L_PLOAD32_I,
@@ -579,14 +542,7 @@ dispatch:
         goto *labels[d->uop];
 
 L_INVALID:
-        if (d->opcode >= 0x40 && d->opcode <= 0x5f) {
-            if (!s.comparison_valid)
-                PyErr_SetString(PyExc_RuntimeError, "conditional branch without comparison");
-            else
-                PyErr_Format(PyExc_RuntimeError, "unknown branch %#x", d->opcode);
-        } else {
-            PyErr_Format(PyExc_RuntimeError, "unsupported opcode %#x at %#x", d->opcode, previous);
-        }
+        PyErr_Format(PyExc_RuntimeError, "unsupported opcode %#x at %#x", d->opcode, previous);
         error = 1; goto done;
 L_NOP:      FINISH_INSN(d->next_pc);
 L_IN:       if (queue_pop(s.inputs, &s.regs[d->a]) < 0) { error = 1; goto done; } FINISH_INSN(d->next_pc);
@@ -597,10 +553,10 @@ L_SCREEN_R: if (append_screen(s.screen_updates, s.regs[d->a], s.regs[d->c]) < 0)
 L_SCREEN_I: if (append_screen(s.screen_updates, s.regs[d->a], d->imm) < 0) { error = 1; goto done; } FINISH_INSN(d->next_pc);
 L_TIME_LO:  s.regs[d->a] = (uint32_t)s.time_value; FINISH_INSN(d->next_pc);
 L_TIME_HI:  s.regs[d->a] = (uint32_t)(s.time_value >> 32); FINISH_INSN(d->next_pc);
-L_GETPC:    s.regs[d->a] = previous; if (d->a == 15) s.comparison_valid = 0; FINISH_INSN(d->next_pc);
+L_GETPC:    s.regs[d->a] = previous; FINISH_INSN(d->next_pc);
 
-#define RR_BIN(label, expr) label: rhs = s.regs[d->c]; s.regs[d->a] = (expr); if (d->a == 15) s.comparison_valid = 0; FINISH_INSN(d->next_pc)
-#define RI_BIN(label, expr) label: rhs = d->imm;       s.regs[d->a] = (expr); if (d->a == 15) s.comparison_valid = 0; FINISH_INSN(d->next_pc)
+#define RR_BIN(label, expr) label: rhs = s.regs[d->c]; s.regs[d->a] = (expr); FINISH_INSN(d->next_pc)
+#define RI_BIN(label, expr) label: rhs = d->imm;       s.regs[d->a] = (expr); FINISH_INSN(d->next_pc)
         RR_BIN(L_NAND_RR, ~(s.regs[d->b] & rhs));
         RR_BIN(L_OR_RR,    s.regs[d->b] | rhs);
         RR_BIN(L_AND_RR,   s.regs[d->b] & rhs);
@@ -611,7 +567,7 @@ L_GETPC:    s.regs[d->a] = previous; if (d->a == 15) s.comparison_valid = 0; FIN
         RR_BIN(L_SHL_RR,   rhs < 32u ? s.regs[d->b] << rhs : 0u);
         RR_BIN(L_SHR_RR,   rhs < 32u ? s.regs[d->b] >> rhs : 0u);
         RR_BIN(L_SAR_RR,   sar32(s.regs[d->b], rhs));
-L_CMP_RR:  if (d->a == 15u) { s.comparison_valid = 1; s.comparison_a = s.regs[d->b]; s.comparison_b = s.regs[d->c]; } s.regs[d->a] = 0; FINISH_INSN(d->next_pc);
+L_CMP_RR:  s.regs[d->a] = flags32(s.regs[d->b], s.regs[d->c]); FINISH_INSN(d->next_pc);
 
         RI_BIN(L_NAND_RI, ~(s.regs[d->b] & rhs));
         RI_BIN(L_OR_RI,    s.regs[d->b] | rhs);
@@ -623,49 +579,25 @@ L_CMP_RR:  if (d->a == 15u) { s.comparison_valid = 1; s.comparison_a = s.regs[d-
         RI_BIN(L_SHL_RI,   rhs < 32u ? s.regs[d->b] << rhs : 0u);
         RI_BIN(L_SHR_RI,   rhs < 32u ? s.regs[d->b] >> rhs : 0u);
         RI_BIN(L_SAR_RI,   sar32(s.regs[d->b], rhs));
-L_CMP_RI:  s.comparison_valid = 1; s.comparison_a = s.regs[d->b]; s.comparison_b = d->imm; s.regs[d->a] = 0; FINISH_INSN(d->next_pc);
+L_CMP_RI:  s.regs[d->a] = flags32(s.regs[d->b], d->imm); FINISH_INSN(d->next_pc);
 #undef RR_BIN
 #undef RI_BIN
 
-#define BR_R(label, cond) label: REQUIRE_CMP(); next = (cond) ? s.regs[d->c] : d->next_pc; FINISH_INSN(next)
-#define BR_I(label, cond) label: REQUIRE_CMP(); next = (cond) ? d->imm       : d->next_pc; FINISH_INSN(next)
-L_JEQ_R: next = (s.comparison_valid ? s.comparison_a == s.comparison_b : (s.regs[15] & 1u) != 0u) ? s.regs[d->c] : d->next_pc; FINISH_INSN(next);
-L_JNE_R: next = (s.comparison_valid ? s.comparison_a != s.comparison_b : (s.regs[15] & 1u) == 0u) ? s.regs[d->c] : d->next_pc; FINISH_INSN(next);
-        BR_R(L_JLTU_R, s.comparison_a <  s.comparison_b);
-        BR_R(L_JGEU_R, s.comparison_a >= s.comparison_b);
-        BR_R(L_JLEU_R, s.comparison_a <= s.comparison_b);
-        BR_R(L_JGTU_R, s.comparison_a >  s.comparison_b);
-        BR_R(L_JLTS_R, (int32_t)s.comparison_a <  (int32_t)s.comparison_b);
-        BR_R(L_JGES_R, (int32_t)s.comparison_a >= (int32_t)s.comparison_b);
-        BR_R(L_JLES_R, (int32_t)s.comparison_a <= (int32_t)s.comparison_b);
-        BR_R(L_JGTS_R, (int32_t)s.comparison_a >  (int32_t)s.comparison_b);
-L_JMP_R: next = s.regs[d->c]; FINISH_INSN(next);
-L_JEQ_I: next = (s.comparison_valid ? s.comparison_a == s.comparison_b : (s.regs[15] & 1u) != 0u) ? d->imm : d->next_pc; FINISH_INSN(next);
-L_JNE_I: next = (s.comparison_valid ? s.comparison_a != s.comparison_b : (s.regs[15] & 1u) == 0u) ? d->imm : d->next_pc; FINISH_INSN(next);
-        BR_I(L_JLTU_I, s.comparison_a <  s.comparison_b);
-        BR_I(L_JGEU_I, s.comparison_a >= s.comparison_b);
-        BR_I(L_JLEU_I, s.comparison_a <= s.comparison_b);
-        BR_I(L_JGTU_I, s.comparison_a >  s.comparison_b);
-        BR_I(L_JLTS_I, (int32_t)s.comparison_a <  (int32_t)s.comparison_b);
-        BR_I(L_JGES_I, (int32_t)s.comparison_a >= (int32_t)s.comparison_b);
-        BR_I(L_JLES_I, (int32_t)s.comparison_a <= (int32_t)s.comparison_b);
-        BR_I(L_JGTS_I, (int32_t)s.comparison_a >  (int32_t)s.comparison_b);
-L_JMP_I: next = d->imm; FINISH_INSN(next);
-#undef BR_R
-#undef BR_I
+L_BRANCH_R: next = BRANCH_TAKEN(d) ? s.regs[d->c] : d->next_pc; FINISH_INSN(next);
+L_BRANCH_I: next = BRANCH_TAKEN(d) ? d->imm       : d->next_pc; FINISH_INSN(next);
 
-L_LOAD8_R:  addr=s.regs[d->c]; s.regs[d->a]=mem8(s.memory,s.mask,addr); if(d->a==15)s.comparison_valid=0; FINISH_INSN(d->next_pc);
-L_LOAD16_R: addr=s.regs[d->c]; s.regs[d->a]=mem16be(s.memory,s.mask,addr); if(d->a==15)s.comparison_valid=0; FINISH_INSN(d->next_pc);
-L_LOAD32_R: addr=s.regs[d->c]; s.regs[d->a]=mem32be(s.memory,s.mask,addr); if(d->a==15)s.comparison_valid=0; FINISH_INSN(d->next_pc);
+L_LOAD8_R:  addr=s.regs[d->c]; s.regs[d->a]=mem8(s.memory,s.mask,addr);  FINISH_INSN(d->next_pc);
+L_LOAD16_R: addr=s.regs[d->c]; s.regs[d->a]=mem16be(s.memory,s.mask,addr);  FINISH_INSN(d->next_pc);
+L_LOAD32_R: addr=s.regs[d->c]; s.regs[d->a]=mem32be(s.memory,s.mask,addr);  FINISH_INSN(d->next_pc);
 L_PLOAD32_R: BAD_PERSISTENT(); addr=s.regs[d->c]; s.regs[d->a]=mem32be(s.persistent,s.persistent_mask,addr); FINISH_INSN(d->next_pc);
 L_STORE8_R: addr=s.regs[d->c]; store8(s.memory,s.mask,addr,s.regs[d->a]); invalidate_decode(&s,addr,1); FINISH_INSN(d->next_pc);
 L_STORE16_R: addr=s.regs[d->c]; store16be(s.memory,s.mask,addr,s.regs[d->a]); invalidate_decode(&s,addr,2); FINISH_INSN(d->next_pc);
 L_STORE32_R: addr=s.regs[d->c]; store32be(s.memory,s.mask,addr,s.regs[d->a]); invalidate_decode(&s,addr,4); FINISH_INSN(d->next_pc);
 L_PSTORE32_R: BAD_PERSISTENT(); addr=s.regs[d->c]; store32be(s.persistent,s.persistent_mask,addr,s.regs[d->a]); FINISH_INSN(d->next_pc);
 
-L_LOAD8_I:  addr=d->imm; s.regs[d->a]=mem8(s.memory,s.mask,addr); if(d->a==15)s.comparison_valid=0; FINISH_INSN(d->next_pc);
-L_LOAD16_I: addr=d->imm; s.regs[d->a]=mem16be(s.memory,s.mask,addr); if(d->a==15)s.comparison_valid=0; FINISH_INSN(d->next_pc);
-L_LOAD32_I: addr=d->imm; s.regs[d->a]=mem32be(s.memory,s.mask,addr); if(d->a==15)s.comparison_valid=0; FINISH_INSN(d->next_pc);
+L_LOAD8_I:  addr=d->imm; s.regs[d->a]=mem8(s.memory,s.mask,addr);  FINISH_INSN(d->next_pc);
+L_LOAD16_I: addr=d->imm; s.regs[d->a]=mem16be(s.memory,s.mask,addr);  FINISH_INSN(d->next_pc);
+L_LOAD32_I: addr=d->imm; s.regs[d->a]=mem32be(s.memory,s.mask,addr);  FINISH_INSN(d->next_pc);
 L_PLOAD32_I: BAD_PERSISTENT(); addr=d->imm; s.regs[d->a]=mem32be(s.persistent,s.persistent_mask,addr); FINISH_INSN(d->next_pc);
 L_STORE8_I: addr=d->imm; store8(s.memory,s.mask,addr,s.regs[d->a]); invalidate_decode(&s,addr,1); FINISH_INSN(d->next_pc);
 L_STORE16_I: addr=d->imm; store16be(s.memory,s.mask,addr,s.regs[d->a]); invalidate_decode(&s,addr,2); FINISH_INSN(d->next_pc);
@@ -677,7 +609,7 @@ L_PSTORE32_I: BAD_PERSISTENT(); addr=d->imm; store32be(s.persistent,s.persistent
     for (;;) {
 dispatch:
         switch ((UOp)d->uop) {
-            case U_INVALID: if(d->opcode>=0x40&&d->opcode<=0x5f){if(!s.comparison_valid)PyErr_SetString(PyExc_RuntimeError,"conditional branch without comparison");else PyErr_Format(PyExc_RuntimeError,"unknown branch %#x",d->opcode);}else PyErr_Format(PyExc_RuntimeError, "unsupported opcode %#x at %#x", d->opcode, previous); error=1; goto done;
+            case U_INVALID: PyErr_Format(PyExc_RuntimeError, "unsupported opcode %#x at %#x", d->opcode, previous); error=1; goto done;
             case U_NOP: FINISH_INSN(d->next_pc);
             case U_IN: if(queue_pop(s.inputs,&s.regs[d->a])<0){error=1;goto done;} FINISH_INSN(d->next_pc);
             case U_OUT_R: if(append_u32(s.outputs,s.regs[d->a])<0){error=1;goto done;} FINISH_INSN(d->next_pc);
@@ -687,45 +619,33 @@ dispatch:
             case U_SCREEN_I: if(append_screen(s.screen_updates,s.regs[d->a],d->imm)<0){error=1;goto done;} FINISH_INSN(d->next_pc);
             case U_TIME_LO: s.regs[d->a]=(uint32_t)s.time_value; FINISH_INSN(d->next_pc);
             case U_TIME_HI: s.regs[d->a]=(uint32_t)(s.time_value>>32); FINISH_INSN(d->next_pc);
-            case U_GETPC: s.regs[d->a]=previous; if(d->a==15)s.comparison_valid=0; FINISH_INSN(d->next_pc);
+            case U_GETPC: s.regs[d->a]=previous; FINISH_INSN(d->next_pc);
 
-#define SW_RR(u, expr) case u: rhs=s.regs[d->c]; s.regs[d->a]=(expr); if(d->a==15)s.comparison_valid=0; FINISH_INSN(d->next_pc)
-#define SW_RI(u, expr) case u: rhs=d->imm; s.regs[d->a]=(expr); if(d->a==15)s.comparison_valid=0; FINISH_INSN(d->next_pc)
+#define SW_RR(u, expr) case u: rhs=s.regs[d->c]; s.regs[d->a]=(expr); FINISH_INSN(d->next_pc)
+#define SW_RI(u, expr) case u: rhs=d->imm; s.regs[d->a]=(expr); FINISH_INSN(d->next_pc)
             SW_RR(U_NAND_RR, ~(s.regs[d->b]&rhs)); SW_RR(U_OR_RR,s.regs[d->b]|rhs); SW_RR(U_AND_RR,s.regs[d->b]&rhs); SW_RR(U_NOR_RR,~(s.regs[d->b]|rhs));
             SW_RR(U_ADD_RR,s.regs[d->b]+rhs); SW_RR(U_SUB_RR,s.regs[d->b]-rhs); SW_RR(U_XOR_RR,s.regs[d->b]^rhs); SW_RR(U_SHL_RR,rhs<32u?s.regs[d->b]<<rhs:0u); SW_RR(U_SHR_RR,rhs<32u?s.regs[d->b]>>rhs:0u); SW_RR(U_SAR_RR,sar32(s.regs[d->b],rhs));
-            case U_CMP_RR: if(d->a==15u){s.comparison_valid=1;s.comparison_a=s.regs[d->b];s.comparison_b=s.regs[d->c];} s.regs[d->a]=0;FINISH_INSN(d->next_pc);
+            case U_CMP_RR: s.regs[d->a]=flags32(s.regs[d->b],s.regs[d->c]);FINISH_INSN(d->next_pc);
             SW_RI(U_NAND_RI, ~(s.regs[d->b]&rhs)); SW_RI(U_OR_RI,s.regs[d->b]|rhs); SW_RI(U_AND_RI,s.regs[d->b]&rhs); SW_RI(U_NOR_RI,~(s.regs[d->b]|rhs));
             SW_RI(U_ADD_RI,s.regs[d->b]+rhs); SW_RI(U_SUB_RI,s.regs[d->b]-rhs); SW_RI(U_XOR_RI,s.regs[d->b]^rhs); SW_RI(U_SHL_RI,rhs<32u?s.regs[d->b]<<rhs:0u); SW_RI(U_SHR_RI,rhs<32u?s.regs[d->b]>>rhs:0u); SW_RI(U_SAR_RI,sar32(s.regs[d->b],rhs));
-            case U_CMP_RI: if(d->a==15u){s.comparison_valid=1;s.comparison_a=s.regs[d->b];s.comparison_b=d->imm;} s.regs[d->a]=0;FINISH_INSN(d->next_pc);
+            case U_CMP_RI: s.regs[d->a]=flags32(s.regs[d->b],d->imm);FINISH_INSN(d->next_pc);
 #undef SW_RR
 #undef SW_RI
 
-#define SW_BR_R(u, cond) case u: REQUIRE_CMP(); next=(cond)?s.regs[d->c]:d->next_pc; FINISH_INSN(next)
-#define SW_BR_I(u, cond) case u: REQUIRE_CMP(); next=(cond)?d->imm:d->next_pc; FINISH_INSN(next)
-            case U_JEQ_R: next=(s.comparison_valid?s.comparison_a==s.comparison_b:(s.regs[15]&1u)!=0u)?s.regs[d->c]:d->next_pc;FINISH_INSN(next);
-            case U_JNE_R: next=(s.comparison_valid?s.comparison_a!=s.comparison_b:(s.regs[15]&1u)==0u)?s.regs[d->c]:d->next_pc;FINISH_INSN(next);
-            SW_BR_R(U_JLTU_R,s.comparison_a<s.comparison_b); SW_BR_R(U_JGEU_R,s.comparison_a>=s.comparison_b); SW_BR_R(U_JLEU_R,s.comparison_a<=s.comparison_b); SW_BR_R(U_JGTU_R,s.comparison_a>s.comparison_b);
-            SW_BR_R(U_JLTS_R,(int32_t)s.comparison_a<(int32_t)s.comparison_b); SW_BR_R(U_JGES_R,(int32_t)s.comparison_a>=(int32_t)s.comparison_b); SW_BR_R(U_JLES_R,(int32_t)s.comparison_a<=(int32_t)s.comparison_b); SW_BR_R(U_JGTS_R,(int32_t)s.comparison_a>(int32_t)s.comparison_b);
-            case U_JMP_R: next=s.regs[d->c]; FINISH_INSN(next);
-            case U_JEQ_I: next=(s.comparison_valid?s.comparison_a==s.comparison_b:(s.regs[15]&1u)!=0u)?d->imm:d->next_pc;FINISH_INSN(next);
-            case U_JNE_I: next=(s.comparison_valid?s.comparison_a!=s.comparison_b:(s.regs[15]&1u)==0u)?d->imm:d->next_pc;FINISH_INSN(next);
-            SW_BR_I(U_JLTU_I,s.comparison_a<s.comparison_b); SW_BR_I(U_JGEU_I,s.comparison_a>=s.comparison_b); SW_BR_I(U_JLEU_I,s.comparison_a<=s.comparison_b); SW_BR_I(U_JGTU_I,s.comparison_a>s.comparison_b);
-            SW_BR_I(U_JLTS_I,(int32_t)s.comparison_a<(int32_t)s.comparison_b); SW_BR_I(U_JGES_I,(int32_t)s.comparison_a>=(int32_t)s.comparison_b); SW_BR_I(U_JLES_I,(int32_t)s.comparison_a<=(int32_t)s.comparison_b); SW_BR_I(U_JGTS_I,(int32_t)s.comparison_a>(int32_t)s.comparison_b);
-            case U_JMP_I: next=d->imm; FINISH_INSN(next);
-#undef SW_BR_R
-#undef SW_BR_I
+            case U_BRANCH_R: next=BRANCH_TAKEN(d)?s.regs[d->c]:d->next_pc; FINISH_INSN(next);
+            case U_BRANCH_I: next=BRANCH_TAKEN(d)?d->imm:d->next_pc; FINISH_INSN(next);
 
-            case U_LOAD8_R: addr=s.regs[d->c];s.regs[d->a]=mem8(s.memory,s.mask,addr);if(d->a==15)s.comparison_valid=0;FINISH_INSN(d->next_pc);
-            case U_LOAD16_R:addr=s.regs[d->c];s.regs[d->a]=mem16be(s.memory,s.mask,addr);if(d->a==15)s.comparison_valid=0;FINISH_INSN(d->next_pc);
-            case U_LOAD32_R:addr=s.regs[d->c];s.regs[d->a]=mem32be(s.memory,s.mask,addr);if(d->a==15)s.comparison_valid=0;FINISH_INSN(d->next_pc);
+            case U_LOAD8_R: addr=s.regs[d->c];s.regs[d->a]=mem8(s.memory,s.mask,addr);FINISH_INSN(d->next_pc);
+            case U_LOAD16_R:addr=s.regs[d->c];s.regs[d->a]=mem16be(s.memory,s.mask,addr);FINISH_INSN(d->next_pc);
+            case U_LOAD32_R:addr=s.regs[d->c];s.regs[d->a]=mem32be(s.memory,s.mask,addr);FINISH_INSN(d->next_pc);
             case U_PLOAD32_R:BAD_PERSISTENT();addr=s.regs[d->c];s.regs[d->a]=mem32be(s.persistent,s.persistent_mask,addr);FINISH_INSN(d->next_pc);
             case U_STORE8_R:addr=s.regs[d->c];store8(s.memory,s.mask,addr,s.regs[d->a]);invalidate_decode(&s,addr,1);FINISH_INSN(d->next_pc);
             case U_STORE16_R:addr=s.regs[d->c];store16be(s.memory,s.mask,addr,s.regs[d->a]);invalidate_decode(&s,addr,2);FINISH_INSN(d->next_pc);
             case U_STORE32_R:addr=s.regs[d->c];store32be(s.memory,s.mask,addr,s.regs[d->a]);invalidate_decode(&s,addr,4);FINISH_INSN(d->next_pc);
             case U_PSTORE32_R:BAD_PERSISTENT();addr=s.regs[d->c];store32be(s.persistent,s.persistent_mask,addr,s.regs[d->a]);FINISH_INSN(d->next_pc);
-            case U_LOAD8_I:addr=d->imm;s.regs[d->a]=mem8(s.memory,s.mask,addr);if(d->a==15)s.comparison_valid=0;FINISH_INSN(d->next_pc);
-            case U_LOAD16_I:addr=d->imm;s.regs[d->a]=mem16be(s.memory,s.mask,addr);if(d->a==15)s.comparison_valid=0;FINISH_INSN(d->next_pc);
-            case U_LOAD32_I:addr=d->imm;s.regs[d->a]=mem32be(s.memory,s.mask,addr);if(d->a==15)s.comparison_valid=0;FINISH_INSN(d->next_pc);
+            case U_LOAD8_I:addr=d->imm;s.regs[d->a]=mem8(s.memory,s.mask,addr);FINISH_INSN(d->next_pc);
+            case U_LOAD16_I:addr=d->imm;s.regs[d->a]=mem16be(s.memory,s.mask,addr);FINISH_INSN(d->next_pc);
+            case U_LOAD32_I:addr=d->imm;s.regs[d->a]=mem32be(s.memory,s.mask,addr);FINISH_INSN(d->next_pc);
             case U_PLOAD32_I:BAD_PERSISTENT();addr=d->imm;s.regs[d->a]=mem32be(s.persistent,s.persistent_mask,addr);FINISH_INSN(d->next_pc);
             case U_STORE8_I:addr=d->imm;store8(s.memory,s.mask,addr,s.regs[d->a]);invalidate_decode(&s,addr,1);FINISH_INSN(d->next_pc);
             case U_STORE16_I:addr=d->imm;store16be(s.memory,s.mask,addr,s.regs[d->a]);invalidate_decode(&s,addr,2);FINISH_INSN(d->next_pc);

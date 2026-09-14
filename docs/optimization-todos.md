@@ -179,9 +179,16 @@ Remaining work, in dependency and payoff order:
 - [x] Keep up to four frequently used values in `r8`-`r11` across branches and loops.
 - [x] Preserve allocated values across nested calls.
 - [x] Save and restore only the callee-saved registers selected by each function.
+- [ ] Retain SSA value identity through register allocation instead of lowering
+  back to a move-heavy physical-register convention first.
 - [ ] Compute block-level liveness.
+- [ ] Allocate SSA values with a real linear-scan or interference-based allocator,
+  selecting physical registers from operation and ABI constraints rather than
+  funneling ordinary arithmetic through `r1` and `r2`.
 - [ ] Build live intervals or an interference graph.
 - [ ] Reuse registers for non-overlapping values.
+- [ ] Insert spills and reloads from allocator decisions, then resolve phi values
+  and edge copies with parallel-copy lowering.
 - [ ] Use spill costs based on loop depth and use frequency.
 - [ ] Prefer caller-saved registers for values that do not cross calls.
 - [x] Prefer `r3`-`r6` for selected values whose live ranges do not cross calls.

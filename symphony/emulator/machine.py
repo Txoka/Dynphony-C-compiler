@@ -201,8 +201,9 @@ class Machine:
     def _step_symphony(self):
         pc = self.pc
         Machine.step(self)
-        # Symphony strides a fixed four bytes. Any PC still inside this
-        # instruction's slot means it fell through rather than branched.
+        # Every Symphony instruction occupies four bytes, so round up from the
+        # variable length ``step`` advanced by. A PC still inside this
+        # instruction's four bytes means it fell through rather than branched.
         if 0 < (self.pc - pc) & MASK <= 4:
             self.pc = (pc + 4) & MASK
 

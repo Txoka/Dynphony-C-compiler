@@ -71,6 +71,14 @@ enum reg_class
 
 #define DEFAULT_PCC_STRUCT_RETURN 0
 
+/* State used by GCC while assigning arguments to the bootstrap ABI's six
+   argument registers.  This type must be visible from tm.h because generic
+   RTL headers reference CUMULATIVE_ARGS before dynphony.cc is parsed. */
+typedef struct dynphony_args
+{
+  unsigned int words;
+} CUMULATIVE_ARGS;
+
 #define FUNCTION_ARG_REGNO_P(N) ((N) >= 1 && (N) <= 6)
 
 #define REGNO_REG_CLASS(R) GENERAL_REGS

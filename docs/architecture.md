@@ -5,6 +5,21 @@ instruction spelling and its bit pattern; this document explains the structure
 those patterns follow, so an implementation can decode instructions the spec
 does not list individually.
 
+## The two ISAs
+
+Symphony and Dynphony share one instruction set, one encoding, and one set of
+semantics. They differ only in how much space an instruction occupies:
+
+- **Symphony** is fixed width. Every instruction takes four bytes, whatever its
+  encoding needs; shorter instructions are followed by padding that is never
+  executed.
+- **Dynphony** is the variable-length version of Symphony. An instruction
+  occupies only the bytes it encodes — two to four — and the next instruction
+  begins immediately after.
+
+The same program bytes mean the same thing in both; only the address of the
+next instruction differs. Everything else in this document applies to both.
+
 ## Registers
 
 Sixteen 32-bit general registers, `r0`-`r15`.
@@ -145,9 +160,10 @@ of known mnemonics.
 
 ## Program counter
 
-Dynphony advances the PC by the instruction's natural length, 2 to 4 bytes.
-Symphony advances it by a fixed 4 bytes regardless of length, so any trailing
-bytes are padding and are not executed.
+Dynphony advances the PC by the instruction's own length, 2 to 4 bytes — this
+variable advance is what distinguishes it from Symphony, which advances by a
+fixed 4 bytes regardless of length, leaving any trailing bytes as padding that
+is not executed.
 
 A Dynphony instruction's length follows from its opcode: I/O operations carry
 their own lengths, and every ALU, jump and memory instruction is 3 bytes in its

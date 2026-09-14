@@ -19,6 +19,9 @@
 #define BIGGEST_ALIGNMENT 32
 #define STRICT_ALIGNMENT 0
 
+/* Minimal CPU preprocessor hook required by GCC's C-family frontend. */
+#define TARGET_CPU_CPP_BUILTINS() do { builtin_define ("__dynphony__"); } while (0)
+
 #define FIRST_PSEUDO_REGISTER 16
 
 /* r0 is hardware zero. r14 is the ABI stack pointer, not an ISA requirement.

@@ -11,9 +11,6 @@
   (and (match_code "const_int")
        (match_test "IN_RANGE (ival, 0, 65535)")))
 
-(define_register_constraint "r" "GENERAL_REGS"
-  "General Dynphony register.")
-
 (define_insn "movsi"
   [(set (match_operand:SI 0 "nonimmediate_operand" "=r,r,m")
         (match_operand:SI 1 "general_operand" "r,I,r"))]

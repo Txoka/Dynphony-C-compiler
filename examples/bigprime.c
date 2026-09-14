@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 
-#define LIMBS 8
+#define LIMBS 4
 
 
 typedef struct {

@@ -64,7 +64,7 @@ bit   7   6   5   4   3   2   1   0
 
 | Mode | Value | Opcode range | Contents |
 | --- | --- | --- | --- |
-| I/O | 0 | `0x00`-`0x1f` | `nop`, `in`, `out`, `keyboard`, `screen`, `time_0`, `time_1`, `counter`, `halt` |
+| I/O | 0 | `0x00`-`0x1f` | `nop`, `in`, `out`, `keyboard`, `screen`, `time_0`, `time_1`, `counter` |
 | ALU | 1 | `0x20`-`0x3f` | `nand`, `or`, `and`, `nor`, `add`, `sub`, `xor`, `lsl`, `lsr`, `asr`, `cmp` |
 | Jump | 2 | `0x40`-`0x5f` | every conditional jump, and `jmp` |
 | Memory | 3 | `0x60`-`0x7f` | `load_8/16/32`, `pload`, `store_8/16/32`, `pstore` |
@@ -149,8 +149,13 @@ Dynphony advances the PC by the instruction's natural length, 2 to 4 bytes.
 Symphony advances it by a fixed 4 bytes regardless of length, so any trailing
 bytes are padding and are not executed.
 
-`halt` stops the machine; implementations that run to a halt address commonly
-model this by leaving the PC unchanged, so the machine stops making progress.
+A Dynphony instruction's length follows from its opcode: I/O operations carry
+their own lengths, and every ALU, jump and memory instruction is 3 bytes in its
+register form and 4 in its immediate form, as selected by opcode bit 4.
+
+There is no halt instruction. A program stops by jumping to itself, which
+leaves the PC unchanged; an implementation detects that stationary PC and stops
+executing.
 
 ## Subroutines
 

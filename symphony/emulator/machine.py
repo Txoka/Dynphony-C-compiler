@@ -23,6 +23,16 @@ def flags(a, b):
     return (a == b) | ((a < b) << 1) | ((signed(a) < signed(b)) << 2)
 
 
+class Registers(list):
+    """The register file. ``zr`` reads as zero because writes to it are dropped."""
+
+    __slots__ = ()
+
+    def __setitem__(self, index, value):
+        if index:
+            list.__setitem__(self, index, value)
+
+
 class Machine:
     def __init__(
         self,
@@ -45,7 +55,7 @@ class Machine:
             raise ValueError("image does not fit contiguously in RAM")
         self.memory = bytearray(ram_size)
         self.mask = ram_size - 1
-        self.regs = [0] * 16
+        self.regs = Registers([0] * 16)
         self.pc = load_address
         self.steps = 0
         self.inputs = deque(value & MASK for value in inputs)
@@ -185,29 +195,15 @@ class Machine:
                 self.write(address, r[operand & 15], size)
         else:
             raise RuntimeError(f"unsupported opcode {op:#x} at {pc:#x}")
-        r[0] = 0
         self.pc = next_pc & MASK
         self.steps += 1
 
     def _step_symphony(self):
         pc = self.pc
-        op = self.read(pc, 1)
-        if op == 8:
-            self.regs[0] = 0
-            self.steps += 1
-            return
         Machine.step(self)
-        if op in (0,):
-            length = 1
-        elif op in (1, 3, 5, 6, 7):
-            length = 2
-        elif op in (0x12, 0x14):
-            length = 4
-        elif op in (2, 4) or 0x20 <= op <= 0x77:
-            length = 4 if op & 0x10 else 3
-        else:
-            return
-        if self.pc == (pc + length) & MASK:
+        # Symphony strides a fixed four bytes. Any PC still inside this
+        # instruction's slot means it fell through rather than branched.
+        if 0 < (self.pc - pc) & MASK <= 4:
             self.pc = (pc + 4) & MASK
 
     def run(

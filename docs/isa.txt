@@ -70,10 +70,6 @@ counter %a(register)
 00000111 aaaa0000
 # Loads the counter value and stores it to %a.
 
-halt
-00001000
-# Halts
-
 
 
 ; ============================================================

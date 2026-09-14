@@ -1,7 +1,7 @@
 """End-to-end compiler tests using complete, mixed-feature C programs.
 
 These deliberately exercise the public ``compile_source`` API and execute the
-raw binary in the reference Dynphony machine.  Unit-level feature tests remain
+raw binary in the reference machine.  Unit-level feature tests remain
 in test_compiler.py; these tests protect the boundaries between compiler stages.
 """
 
@@ -9,16 +9,16 @@ import os
 import unittest
 from pathlib import Path
 
-from dynphony import Target as _Target, compile_source as _compile_source, compile_sources as _compile_sources
-from dynphony.emulator import Machine as _Machine, native_available, native_run
+from symphony import Target as _Target, compile_source as _compile_source, compile_sources as _compile_sources
+from symphony.emulator import Machine as _Machine, native_available, native_run
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TEST_ISA = os.environ.get("DYNPHONY_TEST_ISA", "dynphony")
+TEST_ISA = os.environ.get("SYMPHONY_TEST_ISA", "symphony")
 TEST_PREAMBLE = """#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dynphony.h>
+#include <symphony.h>
 """
 
 

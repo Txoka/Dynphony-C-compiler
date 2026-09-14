@@ -1,5 +1,5 @@
-#ifndef DYNPHONY_STDLIB_H
-#define DYNPHONY_STDLIB_H
+#ifndef SYMPHONY_STDLIB_H
+#define SYMPHONY_STDLIB_H
 
 void *malloc(unsigned int size);
 void free(void *pointer);

@@ -1,13 +1,15 @@
-# Dynphony C project and persistent-storage protocol
+# Symphony C project and persistent-storage protocol
 
-Dynphony has no filesystem, but a C project needs named translation units,
-headers, include roots, and build definitions. The compiler will therefore read
-a serialized virtual filesystem called a **Dynphony C Project**, version 1
-(DCP1).
+The Symphony and Dynphony computers have no filesystem, but a C project needs
+named translation units, headers, include roots, and build definitions. The
+compiler therefore reads a serialized virtual filesystem called a **Symphony C
+Project**, version 1 (DCP1). The `DCP1` and `DCC1` magic values predate the
+Symphony name and are kept unchanged for compatibility.
 
-This is the proposed stable bootstrap format. A host-side Python packer will
-turn a directory into DCP1 and place it in a persistent-storage image. The C
-compiler will read that same image in the emulator and on the Dynphony computer.
+This is the stable bootstrap format. The host-side packer,
+`tools/pack_project.py`, turns a directory into DCP1 and places it in a
+persistent-storage image. The C compiler reads that same image in the emulator
+and on the target computer.
 
 ## Transport
 
@@ -60,11 +62,11 @@ and lengths that exceed configured compiler limits are errors. Only records
 with kind 1 are compiled; all records are visible to quoted includes, and header
 records under configured include roots are visible to angle-bracket includes.
 
-The first packer should default to all `*.c` files as translation units, all
-other explicitly included files as headers, `include/` as an include root when
-present, and no implicit host headers. A small manifest can later override
-those defaults, but it must serialize into the fields above rather than becoming
-a second compiler-only project format.
+The packer treats every `*.c` file as a translation unit and every `*.h` file
+as a header, uses `include/` as the include root when present, and adds no
+implicit host headers. Its `-I`, `-D`, and `--exclude` options override those
+defaults; any future manifest must serialize into the fields above rather than
+becoming a second compiler-only project format.
 
 ## Persistent compiler control block
 
@@ -154,23 +156,25 @@ successful compilation then continues automatically into the generated image.
 Do **not** jump directly to `main` from a cold machine. That bypasses `_start`,
 including stack initialization, static relocation, and other runtime startup.
 
-### Calling the compiler from another Dynphony program
+### Calling the compiler from another program
 
 `main` is a device-facing executable entry, not the reusable compiler API. The
-core will expose an interface conceptually equivalent to:
+core exposes this interface from `include/symphony/compiler.h`:
 
 ```c
 int dyn_compile_project(
     unsigned int project_address,
     unsigned int project_byte_length,
     unsigned int program_load_address,
+    unsigned int symphony,
     unsigned int output_address,
     unsigned int output_capacity
 );
 ```
 
-The first implementation can link this function and its caller into one image,
-which lets the ordinary Dynphony ABI resolve it without a dynamic loader. A
+A nonzero `symphony` argument selects Symphony output. A caller can link this
+function into its own image, which lets the ordinary ABI resolve it without a
+dynamic loader. A
 resident monitor could later call a separately loaded compiler at a published
 entry address, but that requires a stable binary ABI and symbol/export metadata
 that do not exist yet.
@@ -218,4 +222,5 @@ milestone and is not required for compiler self-hosting.
 
 The Python packer and emulator driver only prepare and inspect persistent images;
 they are not hidden dependencies of the compiler. A future editor or monitor on
-Dynphony can write the same DCC1/DCP1 layout directly with `persistent_store`.
+the target machine can write the same DCC1/DCP1 layout directly with
+`persistent_store`.

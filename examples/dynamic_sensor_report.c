@@ -1,4 +1,4 @@
-#include <dynphony.h>
+#include <symphony.h>
 #include <stdlib.h>
 #include <string.h>
 

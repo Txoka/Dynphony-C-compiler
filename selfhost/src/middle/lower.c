@@ -1,4 +1,4 @@
-#include "dynphony/middle.h"
+#include "symphony/middle.h"
 
 static int dyn_constant_expression(
     const struct DynAstProgram *program,

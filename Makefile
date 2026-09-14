@@ -11,10 +11,10 @@ install:
 	$(PYTHON) -m pip install -e .
 
 test: native
-	DYNPHONY_TEST_ISA=dynphony $(PYTHON) -m unittest discover -s tests -v
-	DYNPHONY_TEST_ISA=symphony $(PYTHON) -m unittest discover -s tests -v
-	DYNPHONY_TEST_ISA=dynphony $(PYTHON) -m unittest discover -s selfhost/tests -v
-	DYNPHONY_TEST_ISA=symphony $(PYTHON) -m unittest discover -s selfhost/tests -v
+	SYMPHONY_TEST_ISA=dynphony $(PYTHON) -m unittest discover -s tests -v
+	SYMPHONY_TEST_ISA=symphony $(PYTHON) -m unittest discover -s tests -v
+	SYMPHONY_TEST_ISA=dynphony $(PYTHON) -m unittest discover -s selfhost/tests -v
+	SYMPHONY_TEST_ISA=symphony $(PYTHON) -m unittest discover -s selfhost/tests -v
 
 selfhost: native
 	$(MAKE) -C selfhost stages
@@ -37,5 +37,5 @@ dist: wheel sdist
 
 clean:
 	rm -rf build $(DIST_DIR)
-	find dynphony -name '_native*.so' -delete
-	find dynphony -name '_native*.pyd' -delete
+	find symphony -name '_native*.so' -delete
+	find symphony -name '_native*.pyd' -delete

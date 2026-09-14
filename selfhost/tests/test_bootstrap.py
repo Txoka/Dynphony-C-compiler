@@ -2,9 +2,9 @@ import os
 import unittest
 from pathlib import Path
 
-from dynphony import Target
-from dynphony.emulator import Machine as _Machine, native_available
-from dynphony.project import (
+from symphony import Target
+from symphony.emulator import Machine as _Machine, native_available
+from symphony.project import (
     Project,
     ProjectFile,
     decode_control,
@@ -15,7 +15,7 @@ from dynphony.project import (
 from selfhost.tools.bootstrap import build_stage0, run_machine, run_stage0
 
 
-TEST_ISA = os.environ.get("DYNPHONY_TEST_ISA", "dynphony")
+TEST_ISA = os.environ.get("SYMPHONY_TEST_ISA", "symphony")
 
 
 def Machine(*args, **kwargs):

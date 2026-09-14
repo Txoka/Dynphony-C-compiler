@@ -73,7 +73,8 @@ The runtime-code path additionally supports:
   `break`, `continue`, and `return`.
 - Prefix and postfix `++`/`--`, plus simple and compound assignments.
 - Direct calls to `input`, `output`, `keyboard`, `screen`, `time`, `time_low`,
-  `time_high`, `persistent_load`, and `persistent_store`.
+  `time_high`, `persistent_load`, `persistent_store`, `jump`, and
+  `symphony_heap_remaining`.
 - Multiple scalar function definitions, prototypes with named parameters,
   forward calls, nested calls, and recursion. The first seven scalar arguments
   use `r1` through `r7`; later arguments are passed on the stack. Parameters and
@@ -131,15 +132,15 @@ units are preprocessed, merged, and resolved in deterministic project order.
 - Semantic lowering retains the AST for unoptimized runtime code generation;
   a whole-program constant-return case is still evaluated during bootstrap.
 - `dyn_optimize` is intentionally a no-op.
-- The Dynphony backend emits direct, unoptimized ALU and branch instructions.
+- The Symphony-family backend emits direct, unoptimized ALU and branch instructions.
   Constant-return programs are 16 bytes when their halt address fits a 16-bit
-  immediate and 27 bytes otherwise; dynamic image size depends on the source.
+  immediate and larger otherwise; dynamic image size depends on the source.
 - Dynamic images initialize `sp`, call `main` through the normal ABI, and emit
   frame prologues/epilogues and call/return-address fixups.
 - Static objects and pooled strings are appended with alignment after executable
   code, and address relocations are resolved against the requested load address.
 - The compiler itself uses `malloc`, `calloc`, and `free` while running, so its
-  AST and source buffers exercise the Dynphony heap.
+  AST and source buffers exercise the runtime heap.
 
 ## Current callable implementation interfaces
 

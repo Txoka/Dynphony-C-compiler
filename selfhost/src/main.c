@@ -1,5 +1,5 @@
-#include <dynphony.h>
-#include "dynphony/compiler.h"
+#include <symphony.h>
+#include "symphony/compiler.h"
 
 static void dyn_run_compiled_program(
     unsigned int output_address,
@@ -15,7 +15,7 @@ static void dyn_run_compiled_program(
         source += 4u;
         copied += 4u;
     }
-    dynphony_exec(load_address);
+    jump(load_address);
 }
 
 int main(void) {

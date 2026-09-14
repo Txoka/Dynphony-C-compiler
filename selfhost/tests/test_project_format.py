@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from dynphony.project import (
+from symphony.project import (
     CONTROL_SIZE,
     CONTROL_MODE_ADDRESS,
     MODE_RUN_AFTER_COMPILE,
@@ -16,7 +16,7 @@ from dynphony.project import (
     make_persistent_image,
     project_from_directory,
 )
-from dynphony.cli import main as cli_main
+from symphony.cli import main as cli_main
 
 
 class ProjectFormatTests(unittest.TestCase):
@@ -103,7 +103,7 @@ class ProjectFormatTests(unittest.TestCase):
             initial = root / "initial.bin"
             saved = root / "saved.bin"
             source.write_text(
-                "#include <dynphony.h>\n"
+                "#include <symphony.h>\n"
                 "int main(void){persistent_store(4,0x12345678u);return 0;}\n"
             )
             initial.write_bytes(bytes(256))

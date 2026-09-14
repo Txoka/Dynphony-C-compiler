@@ -1,4 +1,4 @@
-#include "dynphony/frontend.h"
+#include "symphony/frontend.h"
 
 static int dyn_lexer_space(char value) {
     return value == ' ' || value == '\t' || value == '\r' || value == '\n';

@@ -1,7 +1,7 @@
 # Optimization roadmap
 
-This tracks the standard optimization work proposed for Dynphony C. Checked
-items are implemented in version 0.12.0. Partially checked sections describe the
+This tracks the standard optimization work proposed for Symphony C. Checked
+items are implemented. Partially checked sections describe the
 working subset and the remaining work explicitly.
 
 ## Current priorities
@@ -20,7 +20,7 @@ Completed foundations:
 - [x] Model promoted locals with transient SSA versions and phi joins during sparse analysis.
 - [x] Run sparse conditional constant propagation across blocks and remove infeasible CFG edges.
 - [x] Propagate immutable copy/cast chains across blocks without breaking mutable snapshots.
-- [x] Legalize surviving software arithmetic into explicit Dynphony runtime calls, then rerun
+- [x] Legalize surviving software arithmetic into explicit target runtime calls, then rerun
   the global fixed point so ordinary reachability and inlining remove one-use wrappers.
 - [x] Inline callees containing tail calls by preserving their outer continuation.
 - [x] Convert safe direct self-tail recursion into parallel parameter updates and a loop backedge.
@@ -98,7 +98,7 @@ Remaining work, in dependency and payoff order:
   conservative address-taken reachability when a singleton target cannot be proven.
 - [ ] Defer PIC startup self-relocation. If implemented later, place it behind an
   explicit non-default option and benchmark it against the current `r12`
-  base-relative sequences. Dynphony branches are absolute, not PC-relative, so
+  base-relative sequences. Symphony-family branches are absolute, not PC-relative, so
   code branch sites are candidates too. Patch sites must retain fixed width;
   account for the relocation table, patching code, startup time, program reentry,
   and writable-code assumptions.
@@ -203,7 +203,7 @@ Remaining work, in dependency and payoff order:
 - [ ] Simplify induction variables.
 - [ ] Detect constant trip counts.
 - [ ] Remove redundant loop loads and stores.
-- [ ] Recognize count-down loops when they are cheaper for Dynphony.
+- [ ] Recognize count-down loops when they are cheaper for the target ISA.
 
 ## 9. Inlining
 

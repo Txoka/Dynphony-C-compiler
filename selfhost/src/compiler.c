@@ -1,10 +1,10 @@
 #include <stdlib.h>
-#include <dynphony.h>
-#include "dynphony/compiler.h"
-#include "dynphony/frontend.h"
-#include "dynphony/middle.h"
-#include "dynphony/preprocessor.h"
-#include "dynphony/target.h"
+#include <symphony.h>
+#include "symphony/compiler.h"
+#include "symphony/frontend.h"
+#include "symphony/middle.h"
+#include "symphony/preprocessor.h"
+#include "symphony/target.h"
 
 struct DynProjectReader {
     unsigned int address;

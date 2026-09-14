@@ -8,25 +8,25 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from dynphony import (
+from symphony import (
     CompileError,
     Target as _Target,
     compile_source as _compile_source,
     compile_sources as _compile_sources,
 )
-from dynphony.emulator import Machine as _Machine, signed
-from dynphony.frontend import parse, typecheck
-from dynphony.ir import lower
-from dynphony import isa
-from dynphony.targets.dynphony.abi import ABI
+from symphony.emulator import Machine as _Machine, signed
+from symphony.frontend import parse, typecheck
+from symphony.ir import lower
+from symphony import isa
+from symphony.targets.symphony.abi import ABI
 
 ROOT = Path(__file__).resolve().parents[1]
-TEST_ISA = os.environ.get("DYNPHONY_TEST_ISA", "dynphony")
+TEST_ISA = os.environ.get("SYMPHONY_TEST_ISA", "symphony")
 TEST_PREAMBLE = """#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dynphony.h>
+#include <symphony.h>
 """
 
 
@@ -733,7 +733,7 @@ class DiagnosticTests(unittest.TestCase):
             #include <stdio.h>
             #include <stdlib.h>
             #include <string.h>
-            #include <dynphony.h>
+            #include <symphony.h>
             int main(void){
                 bool ok=1; char *p=malloc(1); memset(p,0,1);
                 output(*p); printf("%d",ok); free(p); return input()+ok;
@@ -1094,7 +1094,7 @@ class EncodingTests(unittest.TestCase):
         )
         self.assertIn(isa.output(0x1234, True), result.image.binary)
         self.assertIn(isa.screen(1, 0xABCD, True), result.image.binary)
-        with self.assertRaisesRegex(CompileError, "reserved Dynphony intrinsic"):
+        with self.assertRaisesRegex(CompileError, "reserved device intrinsic"):
             compile_source("unsigned int input(void){return 1;} int main(void){return 0;}")
 
     def test_encoders_against_supplied_spec(self):
@@ -1181,7 +1181,7 @@ class EncodingTests(unittest.TestCase):
             cmd = [
                 sys.executable,
                 "-m",
-                "dynphony",
+                "symphony",
                 str(source),
                 "-o",
                 str(path / "demo.bin"),
@@ -1203,7 +1203,28 @@ class EncodingTests(unittest.TestCase):
             self.assertTrue(
                 json.loads((path / "map.json").read_text())["target"]["pic"]
             )
+            self.assertEqual(
+                json.loads((path / "map.json").read_text())["target"]["isa"],
+                "symphony",
+            )
             self.assertIn("function _start", (path / "demo.ir").read_text())
+
+            for command, expected in (("scc", "symphony"), ("dcc", "dynphony")):
+                target_map = path / f"{command}.json"
+                script = (
+                    f"from symphony.cli import {command}; "
+                    f"raise SystemExit({command}({[str(source), '--map', str(target_map)]!r}))"
+                )
+                result = subprocess.run(
+                    [sys.executable, "-c", script],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(
+                    json.loads(target_map.read_text())["target"]["isa"], expected
+                )
 
 
 if __name__ == "__main__":

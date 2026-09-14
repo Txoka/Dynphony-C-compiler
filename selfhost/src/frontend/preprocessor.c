@@ -1,5 +1,5 @@
 #include <stdlib.h>
-#include "dynphony/preprocessor.h"
+#include "symphony/preprocessor.h"
 
 enum { DYN_PP_MAX_DEPTH = 64u, DYN_PP_MAX_PARAMETERS = 8u };
 

@@ -1,13 +1,15 @@
-# Dynphony C compiler — first version
+# Symphony C compiler
 
-A runnable Python compiler for a useful C subset. It emits **flat, big-endian Dynphony binaries** directly, using the supplied ISA in [docs/isa.txt](docs/isa.txt). No assembler or linker is needed.
+A runnable Python compiler for a useful C subset, with first-class Symphony and
+Dynphony targets. It emits flat, big-endian binaries directly; no separate
+assembler or linker is needed.
 
 The implementation separates syntax parsing, semantic analysis, typed syntax, IR lowering, optimization, instruction selection, and binary layout. It includes a reference emulator and automated execution/encoding tests.
 
-An initial compiler written in the supported C subset now lives in
-[`selfhost/`](selfhost/README.md). It is a deliberately narrow executable
-bootstrap stage: it runs on the Dynphony emulator and compiles constant-return C
-programs into runnable Dynphony images. Use `make selfhost-test` for its complete
+A second compiler, written in the C subset it compiles, lives in
+[`selfhost/`](selfhost/README.md). It reads projects from persistent storage,
+emits Symphony or Dynphony images, and rebuilds itself byte-for-byte. Use
+`make selfhost-test` for its complete
 compile-the-compiler/compile-a-program/run-the-program test.
 
 ## Run it
@@ -16,15 +18,15 @@ Requires Python 3.10+ and `pycparser`. From this project's directory:
 
 ```sh
 python -m pip install -e .
-python -m dynphony examples/demo.c -o demo.bin --run
+scc examples/demo.c -o demo.bin --run
 ```
 
 Compile and link a project from multiple translation units, with project headers
 and command-line macros:
 
 ```sh
-dyncc src/main.c src/parser.c src/backend.c \
-  -I include -D DYN_DEBUG=1 -o compiler.bin
+scc src/main.c src/parser.c src/backend.c \
+  -I include -D DEBUG=1 -o compiler.bin
 ```
 
 Each source file is preprocessed and type-checked in its own translation-unit
@@ -32,24 +34,31 @@ scope. External functions and objects are resolved across the project, while
 file-scope `static` definitions remain private. The linked program is optimized
 as one unit before the final flat image is laid out.
 
-Expected output includes `main returned 146`. Installing the package also provides the `dyncc` command. If `pycparser` is already installed, `python -m dynphony` works directly without installing the project.
+Expected output includes `main returned 146`. Installing the package provides
+two first-class commands:
+
+- `scc` targets Symphony by default.
+- `dcc` targets Dynphony by default.
+
+Both accept `--target symphony` or `--target dynphony` explicitly. If
+`pycparser` is already installed, `python -m symphony` behaves like `scc`.
 
 For long emulator runs, display live host-side instruction throughput and raise
 the safety limit as needed:
 
 ```sh
-python -m dynphony examples/pi.c -o pi.bin --run \
+scc examples/pi.c -o pi.bin --run \
   --hz-meter --max-steps 100000000
 ```
 
-The meter's Hz value is decoded Dynphony instructions executed per real second,
+The meter's Hz value is decoded instructions executed per real second,
 not a simulated hardware clock frequency.
 
 Build and select the optional native C emulator with:
 
 ```sh
 make native
-python -m dynphony examples/pi.c -o pi.bin --run --hz-meter --engine native
+scc examples/pi.c -o pi.bin --run --hz-meter --engine native
 ```
 
 `--engine auto` is the default and prefers the native extension when installed;
@@ -57,14 +66,15 @@ python -m dynphony examples/pi.c -o pi.bin --run --hz-meter --engine native
 wheels with `make wheel`, an sdist with `make sdist`, or both with `make dist`.
 `make ci-wheels` invokes cibuildwheel for the current platform.
 
-Use `--target symphony` to emit and run Symphony's fixed four-byte instruction
-encoding. The native build contains separately compiled Dynphony and Symphony
+Symphony's fixed four-byte instruction encoding is the default. The native
+build contains separately compiled Dynphony and Symphony
 cores; target selection happens before execution and adds no ISA-mode branch to
 either instruction loop.
 
 ```sh
-python -m dynphony examples/demo.c -o demo.symphony.bin \
-  --target symphony --run --engine auto
+scc examples/demo.c -o demo.symphony.bin --run --engine auto
+
+dcc examples/demo.c -o demo.dynphony.bin --run --engine auto
 ```
 
 Tags matching `v*` trigger `.github/workflows/release.yml`. The workflow checks
@@ -72,12 +82,12 @@ that the tag matches `pyproject.toml`, runs the test suite, builds and smoke-tes
 CPython 3.10–3.15 wheels for mainstream Linux x86_64/arm64, macOS Intel/Apple
 Silicon, and Windows AMD64/ARM64 targets, builds an sdist, and attaches every
 distribution to a GitHub Release.
-Create a release with, for example, `git tag v0.13.1 && git push origin v0.13.1`.
+Create a release with, for example, `git tag v0.14.0 && git push origin v0.14.0`.
 
 Generate a position-independent image and execute it at another address:
 
 ```sh
-python -m dynphony examples/demo.c -o demo.pic.bin \
+scc examples/demo.c -o demo.pic.bin \
   --pic --run --run-address 0x12345 \
   --emit-ir demo.ir --map demo.map.json
 ```
@@ -85,22 +95,28 @@ python -m dynphony examples/demo.c -o demo.pic.bin \
 Compile for a fixed nonzero address, with configurable memory sizes:
 
 ```sh
-python -m dynphony examples/demo.c -o demo.bin \
+scc examples/demo.c -o demo.bin \
   --load-address 0x10000 --ram-size 0x100000 \
   --persistent-size 0x10000
 ```
 
 The raw file begins with the first instruction; it is **not padded to the load address**. Load the file's first byte at the selected address and begin execution there. PIC images can instead run at any address where the image fits contiguously and leaves enough room for the stack. `--run-address` only controls emulator placement. JSON maps contain absolute symbols for fixed-address images and image-relative offsets for PIC images.
 
-Run the tests:
+Run the compiler and self-host test suites against both ISAs:
 
 ```sh
-python -m unittest discover -s tests -v
+make test
+```
+
+To run one suite for one ISA, set `SYMPHONY_TEST_ISA` (default `symphony`):
+
+```sh
+SYMPHONY_TEST_ISA=dynphony python -m unittest discover -s tests -v
 ```
 
 ## Supported language
 
-The complete support matrix, known limitations, and Dynphony-specific built-ins
+The complete support matrix, known limitations, and Symphony-family built-ins
 are documented in [docs/c-language-support.md](docs/c-language-support.md).
 
 - Plain `char` is unsigned; explicit signed/unsigned `char`, `short`, `int`, and `long` are supported.
@@ -120,15 +136,16 @@ are documented in [docs/c-language-support.md](docs/c-language-support.md).
 - Zero-filled globals, partially initialized arrays, integer constant initializers, and symbolic pointer initializers such as `int *p = &a[2]`.
 - Software multiplication and signed/unsigned division/remainder. Division is bounded to 32 iterations, including for large unsigned divisors.
 - Freestanding library declarations through `stdio.h`, `stdlib.h`, and
-  `string.h`, plus Dynphony device extensions through `dynphony.h`.
+  `string.h`, plus Symphony device extensions through `symphony.h`.
 
-Entry must be `int main(void)` or `int main()`. In this version, an empty parameter list is treated as exactly zero parameters. Falling off `main` returns zero. Other non-void functions also get a deterministic zero fallthrough, although callers must not rely on this for portable C.
+Entry must be `int main(void)` or `int main()`. An empty parameter list is treated as exactly zero parameters. Falling off `main` returns zero. Other non-void functions also get a deterministic zero fallthrough, although callers must not rely on this for portable C.
 
 ## Machine and ABI
 
 | Property | Value |
 |---|---|
 | Registers / byte addresses | 32 bits |
+| Instruction encoding | Symphony: fixed 4 bytes; Dynphony: variable width |
 | Instruction immediates | 16 bits, unsigned |
 | Byte order | Big-endian |
 | Loads | 8/16/32 bits; narrow loads zero-extend |
@@ -165,13 +182,13 @@ Large constants and all label addresses use fixed-width materialization, avoidin
 
 RAM size participates in layout diagnostics and emulator configuration. Persistent size is validated and recorded in the map. It does not partition main RAM into persistent and volatile regions.
 
-## Dynphony device functions
+## Symphony device functions
 
-Include `<dynphony.h>` to declare the target-specific API. Each call emits the
-matching Dynphony instruction without ordinary function-call overhead:
+Include `<symphony.h>` to declare the target-specific API. Each call emits the
+matching target instruction without ordinary function-call overhead:
 
 ```c
-#include <dynphony.h>
+#include <symphony.h>
 
 unsigned int input(void);                         /* in */
 void output(unsigned int value);                  /* out */
@@ -182,6 +199,9 @@ unsigned int time_low(void);                      /* low 32 bits */
 unsigned int time_high(void);                     /* high 32 bits */
 unsigned int persistent_load(unsigned int address);
 void persistent_store(unsigned int address, unsigned int value);
+void jump(unsigned int address);                    /* does not return */
+char *screen_framebuffer(void);                   /* 96x40 ASCII cells */
+void screen_cursor(unsigned int x, unsigned int y);
 ```
 
 For example:
@@ -204,7 +224,7 @@ compiler target to record and validate the hardware size; pass the same size to
 Device addresses retain the hardware's wrapping behavior. These names are
 reserved and cannot be used for user-defined functions.
 
-## Explicit first-version limits
+## Limitations
 
 This is a C subset compiler, not a conforming full C implementation. Unsupported constructs produce diagnostics where encountered:
 
@@ -213,7 +233,7 @@ This is a C subset compiler, not a conforming full C implementation. Unsupported
   stringification, token pasting, variadic macros, and a hosted standard library
   remain unsupported. Minimal freestanding `stdbool.h`, `stddef.h`, `stdint.h`,
   `stdio.h`, `stdlib.h`, and `string.h` headers are provided, along with the
-  target-specific `dynphony.h`.
+  target-specific `symphony.h`.
 - Multiple source translation units link directly into one optimized flat image.
   Serializable object files, archives, dynamic linking, and incremental linking
   are not yet implemented.
@@ -260,7 +280,7 @@ The next substantial opportunities are dead-global elimination, immutable-global
 ## Project structure
 
 ```text
-dynphony/
+symphony/
   frontends/
     protocol.py      source-language frontend contract
     c/               C parsing, semantics, and common-IR lowering
@@ -269,7 +289,7 @@ dynphony/
     ir.py            canonical language-neutral IR
     analysis/        CFG and reusable middle-end analyses
     passes/          fixed-point manager and optimization passes
-  targets/dynphony/
+  targets/symphony/
     registers.py     architectural register names
     abi.py           C calling-convention roles
     isa.py           instruction names and byte encoders
@@ -277,15 +297,18 @@ dynphony/
     assembler.py     symbols, relocations, and final relaxation
     backend.py       instruction selection, registers, and stack frames
   runtime/           device declarations and selectively linked helpers
-  emulator/          independent reference machine and device model
+  emulator/          reference machine, device model, and native cores
   compiler.py        frontend-independent pipeline orchestrator
-  cli.py             raw binary, IR dump, JSON map, optional execution
-examples/       C source and precompiled demonstration binaries
+  project.py         DCP1/DCC1 persistent project and control records
+  cli.py             scc/dcc: raw binary, IR dump, JSON map, optional execution
+selfhost/       self-hosting compiler written in C
+examples/       example C programs
+tests/          compiler, integration, and encoding tests
+docs/           language reference, design notes, and Dynphony ISA text
 ```
 
-Thin root-level compatibility modules preserve imports such as `dynphony.isa`
-and `dynphony.frontend`. Tests live in `tests/`; the original ISA and design
-notes live in `docs/`.
+Thin root-level compatibility modules preserve imports such as `symphony.isa`
+and `symphony.frontend`.
 
 `examples/towers_of_hanoi.c` is a recursive controller for the Turing Complete
 magnet puzzle. It reads the highest disk number, source, destination, and spare
@@ -311,7 +334,7 @@ report, emits the results, and releases every allocation.
 The API exposes each pipeline stage:
 
 ```python
-from dynphony import Target, compile_source
+from symphony import Target, compile_source
 
 result = compile_source("int main(void) { return 6 * 7; }", target=Target(pic=True))
 raw_bytes = result.image.binary

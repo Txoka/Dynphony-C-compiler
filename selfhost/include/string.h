@@ -1,5 +1,5 @@
-#ifndef DYNPHONY_STRING_H
-#define DYNPHONY_STRING_H
+#ifndef SYMPHONY_STRING_H
+#define SYMPHONY_STRING_H
 
 void *memcpy(void *destination, const void *source, unsigned int count);
 void *memmove(void *destination, const void *source, unsigned int count);

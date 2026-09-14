@@ -1,4 +1,4 @@
-#include "dynphony/frontend.h"
+#include "symphony/frontend.h"
 
 static int dyn_evaluate_node(
     const struct DynAstProgram *program,

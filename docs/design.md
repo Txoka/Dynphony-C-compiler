@@ -6,7 +6,7 @@
 owns every C-specific preparation step, including parser invocation, injected
 device declarations and arithmetic runtime source, semantic analysis, and
 lowering. A future frontend can implement the same source-to-`ModuleIR` protocol
-without importing pycparser or changing middle-end and Dynphony target modules.
+without importing pycparser or changing middle-end and target modules.
 
 Each translation unit first passes through the built-in token-aware preprocessor,
 then `parse` uses pycparser's lexer/parser. Translation units are type-checked in
@@ -20,7 +20,7 @@ parsed separately so diagnostics retain the user's filename and line numbers.
 
 `lower` also creates `_start` as an ordinary root IR function containing target initialization, a direct call to `main`, and termination. `optimize` repeatedly combines local simplification, explicit CFG reachability, call-graph reachability, and no-duplication single-caller relocation until the whole module stops changing. It can turn an indirect call into a direct call when propagation later proves its target, promotes read-only parameters and non-escaping scalar locals, folds scalar operations and branches, fuses comparison/branch pairs, eliminates safe tail calls, applies algebraic and power-of-two reductions, and removes unused values, blocks, functions, and arithmetic helpers.
 
-The Dynphony target separates architectural register names, ABI roles, target/image configuration, ISA encoding, symbolic assembly/relaxation, and backend instruction selection. `Backend` assigns slots to objects and live computed values, rematerializes constants and addresses at their uses, selects immediate instructions, and emits symbolic fixups through `Assembler`. IR has already chosen direct calls, branch direction, and fallthrough; the backend does not rediscover those semantic relationships. Static data is appended with alignment and explicit zero bytes. For fixed-address images, `Assembler.finish` repeatedly relaxes symbolic branches and direct calls after layout, updates label and relocation offsets, and emits the shortest legal target form without padding. That target-width decision requires final byte addresses and remains machine-specific. Data relocations are finalized afterwards. PIC address constants occupy 12 bytes (three immediate ALU operations) plus a 3-byte base add. Ordinary constants use a four-byte immediate form when possible.
+One Symphony-family target package, `targets/symphony/`, serves both ISAs. Dynphony uses variable-width instructions; Symphony emits the same operations padded to fixed four-byte slots. The package separates architectural register names, ABI roles, target/image configuration, ISA encoding, symbolic assembly/relaxation, and backend instruction selection. `Backend` assigns slots to objects and live computed values, rematerializes constants and addresses at their uses, selects immediate instructions, and emits symbolic fixups through `Assembler`. IR has already chosen direct calls, branch direction, and fallthrough; the backend does not rediscover those semantic relationships. Static data is appended with alignment and explicit zero bytes. For fixed-address images, `Assembler.finish` repeatedly relaxes symbolic branches and direct calls after layout, updates label and relocation offsets, and emits the shortest legal target form without padding. That target-width decision requires final byte addresses and remains machine-specific. Data relocations are finalized afterwards. In the Dynphony encoding, PIC address constants occupy 12 bytes (three immediate ALU operations) plus a 3-byte base add, and ordinary constants use a four-byte immediate form when possible; Symphony pads each of those instructions to four bytes.
 
 The middle end owns a reusable fixed-point pass manager. The pipeline schedules
 local scalar/CFG transformations and module call-graph transformations as explicit
@@ -87,16 +87,16 @@ Static constant evaluation operates on the typed AST and applies width/sign norm
 
 ## Software arithmetic
 
-Multiplication shifts the multiplier right and adds selected shifted multiplicands. Unsigned division uses 32 rounds of restoring division; retaining the carry from the partial remainder avoids losing the 33rd bit. Signed wrappers convert operand bit patterns to unsigned magnitudes and restore the quotient/remainder signs. After target-independent folding and strength reduction, Dynphony legalization turns surviving software arithmetic into explicit runtime calls and reruns the global optimizer, allowing ordinary call-graph cleanup and wrapper relocation. There is no hardware multiplication, division, or host-side execution shortcut in generated images.
+Multiplication shifts the multiplier right and adds selected shifted multiplicands. Unsigned division uses 32 rounds of restoring division; retaining the carry from the partial remainder avoids losing the 33rd bit. Signed wrappers convert operand bit patterns to unsigned magnitudes and restore the quotient/remainder signs. After target-independent folding and strength reduction, target legalization turns surviving software arithmetic into explicit runtime calls and reruns the global optimizer, allowing ordinary call-graph cleanup and wrapper relocation. There is no hardware multiplication, division, or host-side execution shortcut in generated images.
 
 ## Extending the compiler
 
-- Add syntax/semantics in `frontend.py`, representing conversions and lvalues explicitly.
+- Add syntax/semantics in `frontends/c/`, representing conversions and lvalues explicitly.
 - Add a typed AST operation only when existing operations cannot express the semantics cleanly.
-- Lower new operations in `ir.py`; keep expression-tree decisions out of the backend.
-- Add machine selection in `backend.py` and primitive encodings in `isa.py`.
-- Add execution tests for observable behavior and encoding checks against the ISA.
-- Extend `optimizer/pipeline.py` with SSA phi nodes, inter-block propagation, common-subexpression elimination, and loop analysis. Reusable graph analysis belongs in `optimizer/` modules such as `cfg.py`.
+- Lower new operations to `middle/ir.py`; keep expression-tree decisions out of the backend.
+- Add machine selection in `targets/symphony/backend.py` and primitive encodings in `targets/symphony/isa.py`.
+- Add execution tests for observable behavior and encoding checks against the ISA; run them for both ISAs with `SYMPHONY_TEST_ISA`.
+- Extend `middle/passes/pipeline.py` with SSA phi nodes, inter-block propagation, common-subexpression elimination, and loop analysis. Reusable graph analysis belongs in `middle/analysis/` modules such as `cfg.py`.
 - Extend allocation with CFG liveness, interval reuse, and spill-cost estimates while preserving call liveness and callee-saved register rules.
 - For wider integers, add explicit multiword IR and helper conventions before changing frontend literal/type rules.
 - Device calls are typed as built-in C declarations, lowered to explicit intrinsic
@@ -105,7 +105,7 @@ Multiplication shifts the multiplier right and adds selected shifted multiplican
 
 ## Validation and practical limits
 
-The unittest suite groups many execution cases and deterministic randomized arithmetic cases. It covers:
+The unittest suite groups many execution cases and deterministic randomized arithmetic cases. `make test` runs it, and the self-host bootstrap suite, once per ISA. It covers:
 
 - ISA encodings checked against both explicit golden bytes and the attached text.
 - Integer promotion, narrowing, sign extension, mixed signedness and comparisons.

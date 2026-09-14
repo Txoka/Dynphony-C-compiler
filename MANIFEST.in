@@ -2,6 +2,6 @@ include README.md
 include Makefile
 include setup.py
 recursive-include docs *.md *.txt
-recursive-include dynphony *.c
+recursive-include symphony *.c
 recursive-include examples *.c
 recursive-include tests *.py

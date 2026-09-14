@@ -4,8 +4,8 @@
 import argparse
 from pathlib import Path
 
-from dynphony.emulator import Machine, native_available, native_run
-from dynphony.project import decode_control, make_persistent_image, project_from_directory
+from symphony.emulator import Machine, native_available, native_run
+from symphony.project import decode_control, make_persistent_image, project_from_directory
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -46,7 +46,7 @@ def main(argv=None):
                         default=0)
     parser.add_argument("--max-steps", type=int)
     parser.add_argument(
-        "--target", choices=("dynphony", "symphony"), default="dynphony"
+        "--target", choices=("dynphony", "symphony"), default="symphony"
     )
     args = parser.parse_args(argv)
     max_steps = args.max_steps or (
@@ -79,8 +79,8 @@ def main(argv=None):
     )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    stage1_path = args.output_dir / "dyncc-stage1.bin"
-    stage2_path = args.output_dir / "dyncc-stage2.bin"
+    stage1_path = args.output_dir / "scc-stage1.bin"
+    stage2_path = args.output_dir / "scc-stage2.bin"
     stage1_path.write_bytes(stage1)
     stage2_path.write_bytes(stage2)
     print(f"Wrote {len(stage1)} bytes to {stage1_path} ({steps1} instructions)")

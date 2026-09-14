@@ -1,4 +1,4 @@
-#include <dynphony.h>
+#include <symphony.h>
 
 /*
  * Towers of Hanoi controller for the Turing Complete magnet puzzle.

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Build and exercise the first compiler written in Dynphony C."""
+"""Build the stage-0 self-hosted compiler and compile one C program with it."""
 
 import argparse
 from pathlib import Path
 
-from dynphony import compile_sources
-from dynphony.emulator import Machine, native_available, native_run
-from dynphony.project import (
+from symphony import Target, compile_sources
+from symphony.emulator import Machine, native_available, native_run
+from symphony.project import (
     Project,
     ProjectFile,
     decode_control,
@@ -25,7 +25,7 @@ STAGE0_SOURCES = (
     "src/frontend/sema.c",
     "src/middle/lower.c",
     "src/middle/optimize.c",
-    "src/target/dynphony/backend.c",
+    "src/target/symphony/backend.c",
 )
 
 
@@ -83,14 +83,17 @@ def main():
     parser.add_argument("-o", "--output", default=SELFHOST / "build/answer.bin", type=Path)
     parser.add_argument(
         "--compiler-output",
-        default=SELFHOST / "build/dyncc-stage0.bin",
+        default=SELFHOST / "build/scc-stage0.bin",
         type=Path,
     )
     parser.add_argument("--max-steps", type=int, default=50_000_000)
     parser.add_argument("--no-run", action="store_true")
+    parser.add_argument(
+        "--target", choices=("dynphony", "symphony"), default="symphony"
+    )
     args = parser.parse_args()
 
-    compiler = build_stage0()
+    compiler = build_stage0(Target(isa=args.target))
     args.compiler_output.parent.mkdir(parents=True, exist_ok=True)
     args.compiler_output.write_bytes(compiler.image.binary)
 
@@ -106,7 +109,11 @@ def main():
     )
 
     if not args.no_run:
-        program = Machine(binary, load_address=control.program_load_address)
+        program = Machine(
+            binary,
+            load_address=control.program_load_address,
+            symphony=args.target == "symphony",
+        )
         halt_offset = 12 if len(binary) == 16 else 24
         result = program.run(control.program_load_address + halt_offset)
         print(f"generated program returned {result} ({program.steps} instructions)")

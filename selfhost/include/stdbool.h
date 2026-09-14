@@ -1,5 +1,5 @@
-#ifndef DYNPHONY_STDBOOL_H
-#define DYNPHONY_STDBOOL_H
+#ifndef SYMPHONY_STDBOOL_H
+#define SYMPHONY_STDBOOL_H
 
 #define bool _Bool
 #define true 1

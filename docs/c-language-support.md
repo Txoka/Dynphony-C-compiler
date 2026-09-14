@@ -1,7 +1,7 @@
-# C language and Dynphony extension reference
+# C language and Symphony extension reference
 
-Dynphony C implements a practical freestanding subset of C. It preprocesses and
-links one or more C translation units into a flat Dynphony memory image without
+Symphony C implements a practical freestanding subset of C. It preprocesses and
+links one or more C translation units into a flat Symphony or Dynphony memory image without
 invoking a host assembler, system linker, or operating-system runtime.
 
 ## Implemented C features
@@ -61,7 +61,7 @@ operations do not pull those helpers into the image.
 - `static` file-scope objects and functions.
 - Static local objects with program lifetime and block scope. Their initializers
   must currently be compile-time constants.
-- File-scope `extern` declarations resolved inside the same source file.
+- File-scope `extern` declarations resolved across all linked translation units.
 - File-scope and block-scope `typedef` declarations, including normal shadowing.
 - Fixed-size arrays, multidimensional arrays, inferred outer bounds, partial
   brace initialization, and character-array initialization from strings.
@@ -150,14 +150,14 @@ deep ordinary call can still collide with an existing allocation. The compiler
 checks that the static image and largest individual frame fit configured RAM,
 but recursion depth remains a program responsibility.
 
-## Library and Dynphony headers
+## Library and Symphony headers
 
 The compiler does not inject library declarations into every translation unit.
 The available freestanding headers are `<stdbool.h>`, `<stddef.h>`,
 `<stdint.h>`, `<stdio.h>`, `<stdlib.h>`, and `<string.h>`. Include `<stdio.h>`
 for literal-format `printf`.
 
-Target-specific APIs are kept separate in `<dynphony.h>`. Include it to declare
+Target-specific APIs are kept separate in `<symphony.h>`. Include it to declare
 the following functions; device calls still lower directly to instructions
 without normal function-call overhead.
 
@@ -174,6 +174,7 @@ unsigned int time_high(void);
 
 unsigned int persistent_load(unsigned int address);
 void persistent_store(unsigned int address, unsigned int value);
+void jump(unsigned int address);
 
 char *screen_framebuffer(void);
 void screen_cursor(unsigned int x, unsigned int y);
@@ -188,6 +189,7 @@ void screen_cursor(unsigned int x, unsigned int y);
 | `time()` | Alias for the low 32 bits of the time device |
 | `time_low()` | Read the low 32 bits of time |
 | `time_high()` | Read the high 32 bits of time |
+| `jump(address)` | Transfer execution to an address without returning |
 | `persistent_load(address)` | Load a value from persistent storage |
 | `persistent_store(address, value)` | Store a value in persistent storage |
 | `screen_framebuffer()` | Return the writable ASCII framebuffer as `char *` |

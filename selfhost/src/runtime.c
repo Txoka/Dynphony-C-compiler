@@ -1,6 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
-#include <dynphony.h>
+#include <symphony.h>
 
 void *memcpy(void *destination, const void *source, unsigned int count) {
     unsigned char *to = destination;
@@ -86,7 +86,7 @@ void *malloc(unsigned int size) {
         ((unsigned int)(__dyn_heap_anchor + 7u) + 3u) & 0xfffffffcu
     );
     required = sizeof(struct DynHeapBlock) + size;
-    if (dynphony_heap_remaining(__dyn_heap_end) < required) return 0;
+    if (symphony_heap_remaining(__dyn_heap_end) < required) return 0;
     block = (struct DynHeapBlock *)__dyn_heap_end;
     block->size = size;
     block->next = 0;

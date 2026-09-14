@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Pack a source tree into a DCC1/DCP1 Dynphony persistent image."""
+"""Pack a source tree into a DCC1/DCP1 persistent compiler image."""
 
 import argparse
 from pathlib import Path
 
-from dynphony.project import make_persistent_image, project_from_directory
+from symphony.project import make_persistent_image, project_from_directory
 
 
 def number(value):
@@ -20,6 +20,10 @@ def main(argv=None):
     parser.add_argument(
         "--run-after-compile", action="store_true",
         help="copy a successful output into RAM and jump to its entry point",
+    )
+    parser.add_argument(
+        "--target", choices=("dynphony", "symphony"), default="symphony",
+        help="ISA the self-hosted compiler should emit (default: symphony)",
     )
     parser.add_argument("-I", dest="include_roots", action="append")
     parser.add_argument("-D", dest="definitions", action="append", default=[])
@@ -37,6 +41,7 @@ def main(argv=None):
         project, persistent_size=args.persistent_size,
         program_load_address=args.load_address,
         run_after_compile=args.run_after_compile,
+        symphony=args.target == "symphony",
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(image)

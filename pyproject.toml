@@ -3,21 +3,22 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dynphony-c"
+name = "symphony-c"
 version = "0.14.0"
-description = "A small typed C compiler targeting the Dynphony ISA"
+description = "A small typed C compiler targeting the Symphony and Dynphony ISAs"
 requires-python = ">=3.10"
 dependencies = ["pycparser>=2.21,<3"]
 
 [project.scripts]
-dyncc = "dynphony.cli:main"
+scc = "symphony.cli:scc"
+dcc = "symphony.cli:dcc"
 
 [tool.setuptools.packages.find]
-include = ["dynphony*"]
+include = ["symphony*"]
 
 [tool.cibuildwheel]
 build = "cp3{10,11,12,13,14,15}-*"
-test-command = "python -c \"from dynphony import compile_source; from dynphony.emulator import Machine, native_available, native_run; assert native_available(); r=compile_source('int main(void){return 6*7;}'); m=Machine(r.image.binary); assert native_run(m, r.image.symbols['_halt']) == 42\""
+test-command = "python -c \"from symphony import Target, compile_source; from symphony.emulator import Machine, native_available, native_run; [(native_available(s) or exit(1), r := compile_source('int main(void){return 6*7;}', target=Target(isa=i)), native_run(Machine(r.image.binary, symphony=s), r.image.symbols['_halt']) == 42 or exit(1)) for i, s in (('symphony', True), ('dynphony', False))]\""
 
 [tool.cibuildwheel.macos]
 archs = ["x86_64", "arm64", "universal2"]

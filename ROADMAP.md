@@ -1,4 +1,4 @@
-# Dynphony C roadmap
+# Symphony C roadmap
 
 The immediate objective is a correct, deterministic compiler written in the C
 subset it compiles. Optimization follows self-hosting; it must not obscure the
@@ -9,9 +9,9 @@ bootstrap correctness work.
 - [x] Establish a separate `selfhost/` tree with frontend, middle-end, target,
   and driver boundaries similar to the Python compiler.
 - [x] Build the C compiler with the Python compiler and execute it in the native
-  or reference Dynphony emulator.
+  or reference emulator.
 - [x] Parse constant-return `main` programs, use the heap for source/AST storage,
-  emit a runnable Dynphony image, and run that child image.
+  emit a runnable image, and run that child image.
 - [x] Document the exact current subset in
   [`selfhost/C-SUPPORT.md`](selfhost/C-SUPPORT.md).
 
@@ -50,13 +50,13 @@ tests plus malformed-source diagnostics.
   comma expressions, increment/decrement, and short-circuit evaluation.
 - [ ] Statements and control flow: blocks, `if`, loops, `break`, `continue`, and
   all return paths.
-- [ ] Functions, prototypes, direct/indirect calls, recursion, and the Dynphony
-  scalar calling convention.
+- [ ] Functions, prototypes, direct/indirect calls, recursion, and the
+  Symphony-family scalar calling convention.
 - [ ] Pointers, fixed arrays, VLAs, strings, structures, enums, and static/global
   storage needed by the compiler sources.
 - [ ] Runtime declarations through standard headers and target facilities through
-  `<dynphony.h>`.
-- [ ] A real typed IR and correctness-first Dynphony instruction selection,
+  `<symphony.h>`.
+- [ ] A real typed IR and correctness-first instruction selection for both ISAs,
   frames, calls, branches, static data, relocations, and image layout.
 
 ## Phase 3 — preprocessing and whole-project linking
@@ -74,7 +74,7 @@ tests plus malformed-source diagnostics.
   input record ordering.
 
 This phase lets the compiler compile and link the entire `selfhost/` folder even
-though the Dynphony computer has no filesystem.
+though the target computers have no filesystem.
 
 ## Phase 4 — prove self-hosting
 
@@ -131,7 +131,7 @@ extension and is not a prerequisite for the scalar optimization work above.
 ## Phase 6 — native in-machine development loop
 
 - [ ] Define a stable exported compiler ABI or resident monitor ABI.
-- [ ] Let a Dynphony editor or monitor construct DCC1/DCP1 directly in persistent
+- [ ] Let an on-machine editor or monitor construct DCC1/DCP1 directly in persistent
   memory without any host filesystem.
 - [ ] Add a PIC/callable output mode that can be copied from persistent storage
   into non-overlapping program RAM.

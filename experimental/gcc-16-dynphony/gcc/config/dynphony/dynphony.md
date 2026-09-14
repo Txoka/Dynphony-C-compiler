@@ -15,21 +15,28 @@
   [(set (match_operand:SI 0 "nonimmediate_operand" "=r,r,m")
         (match_operand:SI 1 "general_operand" "r,I,r"))]
   ""
-  "@\n\tmov\t%0, %1\n\tmov\t%0, %1\n\tstore32\t%1, %0"
+  "@
+mov\t%0, %1
+mov\t%0, %1
+store32\t%1, %0"
   [(set_attr "length" "3,4,3")])
 
 (define_insn "movhi"
   [(set (match_operand:HI 0 "nonimmediate_operand" "=r,m")
         (match_operand:HI 1 "general_operand" "r,r"))]
   ""
-  "@\n\tmov\t%0, %1\n\tstore16\t%1, %0"
+  "@
+mov\t%0, %1
+store16\t%1, %0"
   [(set_attr "length" "3,3")])
 
 (define_insn "movqi"
   [(set (match_operand:QI 0 "nonimmediate_operand" "=r,m")
         (match_operand:QI 1 "general_operand" "r,r"))]
   ""
-  "@\n\tmov\t%0, %1\n\tstore8\t%1, %0"
+  "@
+mov\t%0, %1
+store8\t%1, %0"
   [(set_attr "length" "3,3")])
 
 (define_insn "addsi3"
@@ -37,7 +44,9 @@
         (plus:SI (match_operand:SI 1 "register_operand" "r,r")
                  (match_operand:SI 2 "nonmemory_operand" "r,I")))]
   ""
-  "@\n\tadd\t%0, %1, %2\n\taddi\t%0, %1, %2"
+  "@
+add\t%0, %1, %2
+addi\t%0, %1, %2"
   [(set_attr "length" "3,4")])
 
 (define_insn "subsi3"
@@ -45,7 +54,9 @@
         (minus:SI (match_operand:SI 1 "register_operand" "r,r")
                   (match_operand:SI 2 "nonmemory_operand" "r,I")))]
   ""
-  "@\n\tsub\t%0, %1, %2\n\tsubi\t%0, %1, %2"
+  "@
+sub\t%0, %1, %2
+subi\t%0, %1, %2"
   [(set_attr "length" "3,4")])
 
 (define_insn "andsi3"
@@ -53,7 +64,9 @@
         (and:SI (match_operand:SI 1 "register_operand" "r,r")
                 (match_operand:SI 2 "nonmemory_operand" "r,I")))]
   ""
-  "@\n\tand\t%0, %1, %2\n\tandi\t%0, %1, %2"
+  "@
+and\t%0, %1, %2
+andi\t%0, %1, %2"
   [(set_attr "length" "3,4")])
 
 (define_insn "iorsi3"
@@ -61,7 +74,9 @@
         (ior:SI (match_operand:SI 1 "register_operand" "r,r")
                 (match_operand:SI 2 "nonmemory_operand" "r,I")))]
   ""
-  "@\n\tor\t%0, %1, %2\n\tori\t%0, %1, %2"
+  "@
+or\t%0, %1, %2
+ori\t%0, %1, %2"
   [(set_attr "length" "3,4")])
 
 (define_insn "xorsi3"
@@ -69,7 +84,9 @@
         (xor:SI (match_operand:SI 1 "register_operand" "r,r")
                 (match_operand:SI 2 "nonmemory_operand" "r,I")))]
   ""
-  "@\n\txor\t%0, %1, %2\n\txori\t%0, %1, %2"
+  "@
+xor\t%0, %1, %2
+xori\t%0, %1, %2"
   [(set_attr "length" "3,4")])
 
 (define_insn "ashlsi3"
@@ -77,7 +94,9 @@
         (ashift:SI (match_operand:SI 1 "register_operand" "r,r")
                    (match_operand:SI 2 "nonmemory_operand" "r,I")))]
   ""
-  "@\n\tlsl\t%0, %1, %2\n\tlsli\t%0, %1, %2"
+  "@
+lsl\t%0, %1, %2
+lsli\t%0, %1, %2"
   [(set_attr "length" "3,4")])
 
 (define_insn "lshrsi3"
@@ -85,7 +104,9 @@
         (lshiftrt:SI (match_operand:SI 1 "register_operand" "r,r")
                      (match_operand:SI 2 "nonmemory_operand" "r,I")))]
   ""
-  "@\n\tlsr\t%0, %1, %2\n\tlsri\t%0, %1, %2"
+  "@
+lsr\t%0, %1, %2
+lsri\t%0, %1, %2"
   [(set_attr "length" "3,4")])
 
 (define_insn "ashrsi3"
@@ -93,7 +114,9 @@
         (ashiftrt:SI (match_operand:SI 1 "register_operand" "r,r")
                      (match_operand:SI 2 "nonmemory_operand" "r,I")))]
   ""
-  "@\n\tasr\t%0, %1, %2\n\tasri\t%0, %1, %2"
+  "@
+asr\t%0, %1, %2
+asri\t%0, %1, %2"
   [(set_attr "length" "3,4")])
 
 (define_insn "cmpsi"

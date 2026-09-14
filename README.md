@@ -277,6 +277,22 @@ The optimizer currently applies safe local and whole-program reductions:
 
 The next substantial opportunities are dead-global elimination, immutable-global load folding, bounded compile-time evaluation, loop analysis, paired division/remainder, common-subexpression elimination, and control-flow-aware stack-slot reuse. Stack-slot reuse must use control-flow liveness rather than textual instruction intervals because loop backedges make the latter incorrect. The dependency-ordered checklist is in [docs/optimization-todos.md](docs/optimization-todos.md).
 
+## Comparing against GCC
+
+`gcc-backend/` is a bootstrap GCC machine-description target used purely to
+benchmark dyncc's codegen/optimizer output against real GCC (`-Os`/`-O2`) on
+the same example programs, by hijacking GCC's `moxie` target and
+hand-assembling its output into real Symphony machine code. It is not part
+of dyncc's own build. See [gcc-backend/README.md](gcc-backend/README.md)
+for how to build the cross-compiler, assemble its output, and run a fair
+comparison.
+
+This branch also carries this repo's loop optimizer passes (dominator/loop
+analysis, loop-invariant code motion, induction-variable strength reduction,
+redundant loop load/store elimination) — kept off `main` for now pending a
+fix for a miscompilation these passes cause when compiling the self-hosted
+compiler's own sources (see `selfhost/`).
+
 ## Project structure
 
 ```text

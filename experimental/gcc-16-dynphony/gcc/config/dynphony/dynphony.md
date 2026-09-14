@@ -1,3 +1,4 @@
+;; Dynphony GCC machine description.
 ;; GCC machine description for the Dynphony ISA bootstrap backend.
 
 (define_constants

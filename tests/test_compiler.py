@@ -1155,7 +1155,7 @@ class EncodingTests(unittest.TestCase):
 
         # Fixed-width execution skips non-semantic padding bytes.  Keeping the
         # original bytes in memory also makes code inspection target-faithful.
-        fixed = bytes([0x01, 0x10, 0x08, 0x7F, 0x34, 0x11, 0, 1, 0x08, 0, 0, 0])
+        fixed = bytes([0x01, 0x10, 0x08, 0x7F, 0x34, 0x11, 0, 1, 0x58, 0x0F, 0, 8])
         m = Machine(fixed, 256, inputs=[41], symphony=True)
         self.assertEqual(m.run(), 42)
         self.assertEqual(m.steps, 3)

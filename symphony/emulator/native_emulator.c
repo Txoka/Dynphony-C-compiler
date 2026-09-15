@@ -4,11 +4,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef DYN_SYMPHONY
-#  define DYN_NEXT_PC(pc, size) ((pc) + 4u)
-#else
-#  define DYN_NEXT_PC(pc, size) ((pc) + (size))
-#endif
+/* Symphony vs. Dynphony is a per-run flag (State.is_symphony), checked once
+ * per decode below. decoded_at() caches the result per PC (see below), so
+ * this branch runs once per cold decode, not once per executed step -- the
+ * hot dispatch loop never re-derives next_pc. */
+#define DYN_NEXT_PC(pc, size) ((s)->is_symphony ? ((pc) + 4u) : ((pc) + (size)))
 
 #if defined(__GNUC__) || defined(__clang__)
 #  define DYN_LIKELY(x)   __builtin_expect(!!(x), 1)
@@ -19,8 +19,9 @@
 #endif
 
 /*
- * Optimized Dynphony/Symphony interpreter. Each build selects one ISA
- * (DYN_SYMPHONY), so neither instruction loop branches on the ISA.
+ * Optimized Dynphony/Symphony interpreter. Both ISAs are served by one
+ * binary; State.is_symphony selects between them at decode time (see
+ * DYN_NEXT_PC above), so the hot dispatch loop itself never branches on it.
  *
  * Main differences from the original implementation:
  *   - dedicated byte/BE16/BE32 memory helpers
@@ -96,6 +97,7 @@ typedef struct {
     uint64_t steps;
     uint64_t time_value;
     int has_persistent;
+    int is_symphony;
 
     Decoded *decode;
     size_t decode_count;
@@ -220,6 +222,12 @@ static int load_state(State *s, PyObject *machine) {
         PyErr_SetString(PyExc_ValueError, "machine.mask addresses beyond machine.memory");
         return -1;
     }
+
+    obj = get_attr(machine, "symphony");
+    if (!obj) return -1;
+    s->is_symphony = PyObject_IsTrue(obj);
+    Py_DECREF(obj);
+    if (s->is_symphony < 0) return -1;
 
     obj = get_attr(machine, "steps");
     if (!obj) return -1;
@@ -678,21 +686,12 @@ static PyMethodDef methods[] = {
 
 static struct PyModuleDef module = {
     PyModuleDef_HEAD_INIT,
-#ifdef DYN_SYMPHONY
-    "_native_symphony",
-    "Optimized native Symphony emulator core.",
-#else
-    "_native_dynphony",
-    "Optimized native Dynphony emulator core.",
-#endif
+    "_native",
+    "Optimized native Dynphony/Symphony emulator core.",
     -1,
     methods
 };
 
-#ifdef DYN_SYMPHONY
-PyMODINIT_FUNC PyInit__native_symphony(void) {
-#else
-PyMODINIT_FUNC PyInit__native_dynphony(void) {
-#endif
+PyMODINIT_FUNC PyInit__native(void) {
     return PyModule_Create(&module);
 }

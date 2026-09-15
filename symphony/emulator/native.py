@@ -1,23 +1,19 @@
 """Optional native execution engine for the reference Machine state model."""
 
 try:
-    from . import _native_dynphony
+    from . import _native
 except ImportError:
-    _native_dynphony = None
-
-try:
-    from . import _native_symphony
-except ImportError:
-    _native_symphony = None
+    _native = None
 
 
 def available(symphony=False):
-    return (_native_symphony if symphony else _native_dynphony) is not None
+    del symphony  # both ISAs are served by the same native extension
+    return _native is not None
 
 
 def run(machine, halt_address=None, max_steps=5_000_000, progress=None,
         progress_interval=250_000):
-    engine = _native_symphony if machine.symphony else _native_dynphony
+    engine = _native
     if engine is None:
         raise RuntimeError("native emulator extension is not installed")
     while machine.steps < max_steps:

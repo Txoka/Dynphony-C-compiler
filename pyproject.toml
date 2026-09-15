@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "symphony-c"
+name = "cymphony"
 version = "0.14.2"
 description = "A small typed C compiler targeting the Symphony and Dynphony ISAs"
 requires-python = ">=3.10"

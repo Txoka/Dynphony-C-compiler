@@ -1,4 +1,4 @@
-name: Release wheels
+name: Release
 
 on:
   push:
@@ -16,9 +16,11 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+
       - name: Check tag matches package version
         run: |
           python - <<'PY'
@@ -26,28 +28,41 @@ jobs:
           import pathlib
           import tomllib
 
-          version = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
+          version = tomllib.loads(
+              pathlib.Path("pyproject.toml").read_text()
+          )["project"]["version"]
+
           tag = os.environ["GITHUB_REF_NAME"]
           tagged_version = tag[1:] if tag.startswith("v") else tag
+
           if tagged_version != version:
               raise SystemExit(
                   f"tag {tag!r} does not match pyproject.toml version {version!r}"
               )
           PY
+
       - name: Install
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
+
       - name: Check native emulator is available
         run: |
           python - <<'PY'
           from symphony.emulator import native_available
 
-          missing = [name for name, symphony in (("dynphony", False), ("symphony", True))
-                     if not native_available(symphony)]
+          missing = [
+              name
+              for name, symphony in (("dynphony", False), ("symphony", True))
+              if not native_available(symphony)
+          ]
+
           if missing:
-              raise SystemExit(f"native emulator missing for: {', '.join(missing)}")
+              raise SystemExit(
+                  f"native emulator missing for: {', '.join(missing)}"
+              )
           PY
+
       - name: Run tests
         run: |
           SYMPHONY_TEST_ISA=dynphony python -m unittest discover -s tests -v
@@ -59,6 +74,7 @@ jobs:
     name: ${{ matrix.name }} wheels
     needs: validate
     runs-on: ${{ matrix.os }}
+
     strategy:
       fail-fast: false
       matrix:
@@ -67,44 +83,55 @@ jobs:
             os: ubuntu-latest
             archs: "x86_64"
             qemu: false
+
           - name: linux-arm64
             os: ubuntu-24.04-arm
             archs: "aarch64"
             qemu: false
+
           - name: macos-intel
             os: macos-15-intel
             archs: "x86_64"
             qemu: false
+
           - name: macos-arm
             os: macos-latest
             archs: "arm64"
             qemu: false
+
           - name: windows-x86
             os: windows-latest
             archs: "AMD64"
             qemu: false
+
           - name: windows-arm
             os: windows-11-arm
             archs: "ARM64"
             qemu: false
+
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
+
       - name: Enable emulated CPU architectures
         if: matrix.qemu
         uses: docker/setup-qemu-action@v3
         with:
           platforms: all
+
       - name: Install cibuildwheel
         run: python -m pip install cibuildwheel==4.2.1
+
       - name: Build and test wheels
         run: python -m cibuildwheel --output-dir wheelhouse
         env:
           CIBW_ARCHS: ${{ matrix.archs }}
+
       - name: Upload wheels
         uses: actions/upload-artifact@v7
         with:
@@ -116,17 +143,21 @@ jobs:
     name: Source distribution
     needs: validate
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+
       - name: Build sdist
         run: |
           python -m pip install build
           python -m build --sdist
+
       - name: Upload sdist
         uses: actions/upload-artifact@v7
         with:
@@ -134,23 +165,51 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
 
+  pypi:
+    name: Publish to PyPI
+    needs: [wheels, sdist]
+    runs-on: ubuntu-latest
+
+    environment:
+      name: pypi
+      url: https://pypi.org/project/cymphony/
+
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
   release:
     name: Publish GitHub Release
     needs: [wheels, sdist]
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
+
     steps:
       - name: Check out tag for GitHub CLI release operations
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
           persist-credentials: false
+
       - name: Download distributions
         uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
+
       - name: Create release and upload distributions
         env:
           GH_TOKEN: ${{ github.token }}
@@ -159,5 +218,8 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* --clobber
           else
-            gh release create "$TAG" dist/* --verify-tag --generate-notes --title "$TAG"
+            gh release create "$TAG" dist/* \
+              --verify-tag \
+              --generate-notes \
+              --title "$TAG"
           fi
